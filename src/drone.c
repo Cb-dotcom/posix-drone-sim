@@ -7,12 +7,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>        // fabs for motion deadzone
+#include <time.h>        // nanosleep
 
 #include "sim_types.h"
 #include "sim_ipc.h"
 #include "sim_const.h"
 #include "sim_log.h"
-#include "sim_params.h"   // runtime parameters (mass, damping, dt, world size)
+#include "sim_params.h"  // runtime parameters (mass, damping, dt, world size)
 
 // Flag set by the SIGINT handler to request a clean shutdown
 static volatile sig_atomic_t running = 1;
@@ -50,10 +51,94 @@ static void apply_world_bounds(DroneState *d, double world_width, double world_h
 // residual motion near equilibrium (especially near walls).
 static void apply_motion_deadzone(DroneState *d)
 {
-    const double V_EPS = 0.01;  // tweakable: "small enough" velocity
+    const double V_EPS = 1e-4;
 
     if (fabs(d->vx) < V_EPS) d->vx = 0.0;
     if (fabs(d->vy) < V_EPS) d->vy = 0.0;
+}
+
+/*
+ * Drain ALL pending CommandState messages and keep only the most recent one.
+ *
+ * Why: if bb_server writes faster than we integrate, commands can queue up.
+ * Reading only one per tick causes "old" forces to be applied late and
+ * can look like jumping/teleporting.
+ *
+ * Return values:
+ *  1 = command updated
+ *  0 = no pending commands
+ * -1 = EOF or fatal read error
+ */
+static int drain_latest_command(int fd_cmd_in, CommandState *c)
+{
+    int updated = 0;
+
+    while (1) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd_cmd_in, &rfds);
+
+        // Non-blocking poll: only drain what's already available
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+
+        int ready = select(fd_cmd_in + 1, &rfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("drone: select (drain)");
+            return -1;
+        }
+
+        if (ready == 0 || !FD_ISSET(fd_cmd_in, &rfds)) {
+            break; // nothing more to read right now
+        }
+
+        CommandState tmp;
+        ssize_t r = read_full(fd_cmd_in, &tmp, sizeof(tmp));
+        if (r == (ssize_t)sizeof(tmp)) {
+            *c = tmp;
+            updated = 1;
+            continue; // try to drain more (keep newest)
+        }
+
+        if (r == 0) {
+            sim_log_info("drone: cmd pipe EOF, exiting\n");
+            return -1;
+        }
+
+        if (r < 0) {
+            perror("drone: read_full(fd_cmd_in)");
+            return -1;
+        }
+
+        // Partial read shouldn't happen with read_full, but keep safe.
+        sim_log_info("drone: unexpected partial read (%zd bytes)\n", r);
+        return -1;
+    }
+
+    return updated;
+}
+
+static void sleep_dt(double dt)
+{
+    if (dt <= 0.0) {
+        return;
+    }
+
+    struct timespec ts;
+    ts.tv_sec  = (time_t)dt;
+    ts.tv_nsec = (long)((dt - (double)ts.tv_sec) * 1e9);
+
+    if (ts.tv_nsec < 0) ts.tv_nsec = 0;
+    if (ts.tv_nsec > 999999999L) ts.tv_nsec = 999999999L;
+
+    // nanosleep can be interrupted; restart if needed
+    while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+        // continue
+    }
 }
 
 int main(int argc, char *argv[])
@@ -86,10 +171,7 @@ int main(int argc, char *argv[])
     const double world_width  = (double)params->world_width;
     const double world_height = (double)params->world_height;
 
-    unsigned int sleep_us = (unsigned int)(dt * 1e6);
-
-    sim_log_info("drone: started (dt=%.3f, M=%.3f, K=%.3f)\n",
-                 dt, mass, damping);
+    sim_log_info("drone: started (dt=%.3f, M=%.3f, K=%.3f)\n", dt, mass, damping);
 
     DroneState   d;
     CommandState c;
@@ -108,52 +190,38 @@ int main(int argc, char *argv[])
     c.last_key = 0;
 
     while (running) {
-        // Wait up to dt for a new CommandState from bb_server
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(fd_cmd_in, &readfds);
+        // Drain all pending commands; keep only the newest one
+        int drained = drain_latest_command(fd_cmd_in, &c);
+        if (drained < 0) {
+            break; // EOF or fatal error
+        }
 
-        struct timeval tv;
-        tv.tv_sec  = 0;
-        tv.tv_usec = sleep_us;
-
-        int ready = select(fd_cmd_in + 1, &readfds, NULL, NULL, &tv);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            perror("drone: select");
+        if (c.quit) {
+            sim_log_info("drone: quit flag set, exiting\n");
             break;
         }
 
-        if (ready > 0 && FD_ISSET(fd_cmd_in, &readfds)) {
-            CommandState new_c;
-            ssize_t r = read_full(fd_cmd_in, &new_c, sizeof(new_c));
-            if (r == (ssize_t)sizeof(new_c)) {
-                int reset_edge = (new_c.reset == 1 && c.reset == 0);
-                c = new_c;
+        if (c.reset) {
+            // Reset back to center of the world
+            d.x  = world_width  / 2.0;
+            d.y  = world_height / 2.0;
+            d.vx = 0.0;
+            d.vy = 0.0;
 
-                if (c.quit) {
-                    sim_log_info("drone: quit flag set, exiting\n");
-                    break;
-                }
-
-                if (reset_edge) {
-                    // Reset back to center of the world
-                    d.x  = world_width  / 2.0;
-                    d.y  = world_height / 2.0;
-                    d.vx = 0.0;
-                    d.vy = 0.0;
-                }
-            } else if (r == 0) {
-                sim_log_info("drone: cmd pipe EOF, exiting\n");
-                break;
-            } else if (r < 0) {
-                perror("drone: read_full(fd_cmd_in)");
-                break;
-            }
+            // IMPORTANT: clear reset locally so we don't keep resetting
+            c.reset = 0;
         }
 
+        // Optional: strong brake behavior (keeps it stable if brake used)
+        // If you want "brake = stop now", uncomment this block.
+        /*
+        if (c.brake) {
+            d.vx = 0.0;
+            d.vy = 0.0;
+        }
+        */
+
+        // Integrate exactly one physics step per loop (fixed dt)
         double fx = c.fx;
         double fy = c.fy;
 
@@ -163,7 +231,6 @@ int main(int argc, char *argv[])
         d.vx += ax * dt;
         d.vy += ay * dt;
 
-        // Kill tiny velocities to avoid jitter when we're almost at rest
         apply_motion_deadzone(&d);
 
         d.x  += d.vx * dt;
@@ -175,6 +242,9 @@ int main(int argc, char *argv[])
             perror("drone: write_full(fd_state_out)");
             break;
         }
+
+        // Sleep to maintain the dt cadence (instead of "dt is select timeout")
+        sleep_dt(dt);
     }
 
     sim_log_info("drone: exiting\n");

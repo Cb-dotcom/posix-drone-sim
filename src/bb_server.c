@@ -162,6 +162,9 @@ static void compute_wall_repulsion(const WorldState *world,
  * Obstacle repulsion:
  * - same Latombe law, but vector points away from obstacle.
  * - uses a slightly BIGGER radius than walls: rho_obs = 1.5 * rho
+ *
+ * FIX: use distance to obstacle SURFACE (center_dist - obs->radius),
+ *      and clamp close distances so repulsion stays strong.
  */
 static void compute_obstacle_repulsion(const WorldState *world,
                                        const SimParams  *params,
@@ -173,7 +176,7 @@ static void compute_obstacle_repulsion(const WorldState *world,
 
     double rho     = params->rho;
     double eta     = params->eta;
-    double rho_obs = rho * 1.5;   // obstacle radius (bigger than walls)
+    double rho_obs = rho * 1.5;   // obstacle radius-of-influence (bigger than walls)
 
     if (rho_obs <= 0.0 || eta <= 0.0) {
         *out_fx = 0.0;
@@ -186,6 +189,10 @@ static void compute_obstacle_repulsion(const WorldState *world,
     double vx = world->drone.vx;
     double vy = world->drone.vy;
 
+    // IMPORTANT: repulsive_force() returns 0 when distance <= 0.1,
+    // so clamp to a tiny bit ABOVE that threshold.
+    const double REP_MIN_DIST = 0.100001;
+
     // NOTE: loop over slots received, not active count.
     for (int i = 0; i < world->obstacles_slots; ++i) {
         const Obstacle *obs = &world->obstacles[i];
@@ -195,26 +202,33 @@ static void compute_obstacle_repulsion(const WorldState *world,
 
         double dx = obs->x - x;
         double dy = obs->y - y;
-        double dist = sqrt(dx * dx + dy * dy);
-        if (dist <= 0.0 || dist > rho_obs) {
-            continue; // too far or invalid
+
+        double center_dist = sqrt(dx * dx + dy * dy);
+        if (center_dist <= 1e-9) {
+            continue;
         }
 
-        double f_mag = repulsive_force(dist, eta, rho_obs, vx, vy);
+        // Distance to obstacle SURFACE (not center)
+        double surface_dist = center_dist - obs->radius;
+
+        // If we're inside / extremely close, clamp so repulsion doesn't turn off
+        if (surface_dist < REP_MIN_DIST) {
+            surface_dist = REP_MIN_DIST;
+        }
+
+        // Apply only within radius-of-influence from the surface
+        if (surface_dist > rho_obs) {
+            continue;
+        }
+
+        double f_mag = repulsive_force(surface_dist, eta, rho_obs, vx, vy);
         if (f_mag <= 0.0) {
             continue;
         }
 
-        // Direction: AWAY from obstacle (from obstacle to drone).
-        double nx = x - obs->x;
-        double ny = y - obs->y;
-        double nlen = sqrt(nx * nx + ny * ny);
-        if (nlen <= 0.0) {
-            continue;
-        }
-
-        nx /= nlen;
-        ny /= nlen;
+        // Direction: away from obstacle (from obstacle to drone)
+        double nx = (x - obs->x) / center_dist;
+        double ny = (y - obs->y) / center_dist;
 
         fx += f_mag * nx;
         fy += f_mag * ny;
