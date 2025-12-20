@@ -21,7 +21,8 @@
 // without introducing race conditions.
 static volatile sig_atomic_t running = 1;
 
-void play(const char *filename) {
+void play(const char *filename)
+{
     pid_t pid = fork();
     if (pid == 0) {
         int fd = open("/dev/null", O_RDWR);
@@ -101,9 +102,9 @@ static double repulsive_force(double distance,
  * Magnitude from repulsive_force(), using full |v|.
  */
 static void compute_wall_repulsion(const WorldState *world,
-                                   const SimParams   *params,
-                                   double            *out_fx,
-                                   double            *out_fy)
+                                   const SimParams  *params,
+                                   double           *out_fx,
+                                   double           *out_fy)
 {
     double fx = 0.0;
     double fy = 0.0;
@@ -163,9 +164,9 @@ static void compute_wall_repulsion(const WorldState *world,
  * - uses a slightly BIGGER radius than walls: rho_obs = 1.5 * rho
  */
 static void compute_obstacle_repulsion(const WorldState *world,
-                                       const SimParams   *params,
-                                       double            *out_fx,
-                                       double            *out_fy)
+                                       const SimParams  *params,
+                                       double           *out_fx,
+                                       double           *out_fy)
 {
     double fx = 0.0;
     double fy = 0.0;
@@ -284,7 +285,7 @@ static void handle_targets(WorldState *world,
                            double prev_x,
                            double prev_y)
 {
-    if (world->num_targets <= 0) {
+    if (world->targets_slots <= 0) {
         return;
     }
 
@@ -342,7 +343,6 @@ int main(int argc, char *argv[])
 
     // we add the music
     pid_t music = fork();
-
     if (music == 0) {
         // Detach completely
         int fd = open("/dev/null", O_RDWR);
@@ -354,7 +354,8 @@ int main(int argc, char *argv[])
         }
 
         // Try MP3 looping with mpg123
-        execlp("mpg123", "mpg123", "-f", "4098", "--loop", "-1", "../../bin/conf/music.mp3", (char *)NULL);
+        execlp("mpg123", "mpg123", "-f", "4098", "--loop", "-1",
+               "../../bin/conf/music.mp3", (char *)NULL);
 
         perror("Music!");
         _exit(1);
@@ -463,6 +464,7 @@ int main(int argc, char *argv[])
     // For repulsion logic
     int input_received   = 0;
     int wall_active_prev = 0;
+    int rep_active_prev  = 0;  // IMPORTANT: prevents command flooding/teleporting
 
     // Init UI and show menu
     ui_init();
@@ -629,7 +631,6 @@ int main(int argc, char *argv[])
                     world.num_obstacles = count;
                 } else if (r == 0) {
                     sim_log_info("bb_server: obstacles pipe EOF");
-                    // Keep last known obstacles, just don't expect more updates
                     obs_to_read = 0;
                     world.obstacles_slots = 0;
                 } else if (r < 0) {
@@ -682,12 +683,15 @@ int main(int argc, char *argv[])
             double fx_rep = fx_wall + fx_obs;
             double fy_rep = fy_wall + fy_obs;
 
-            // Only send command if:
-            // 1. We received new user input, OR
-            // 2. Repulsive forces are active (near walls or obstacles)
-            if (input_received || fx_rep != 0.0 || fy_rep != 0.0) {
+            int rep_active = (fx_rep != 0.0 || fy_rep != 0.0);
+
+            // IMPORTANT: avoid flooding the drone pipe.
+            // Send only when:
+            //  - new input, OR
+            //  - repulsion currently active, OR
+            //  - repulsion was active last frame (send "off" once)
+            if (input_received || rep_active || rep_active_prev) {
                 CommandState out_cmd = user_cmd;
-                int          rep_active = (fx_rep != 0.0 || fy_rep != 0.0);
 
                 if (rep_active) {
                     // Superposition: user force + wall + obstacle repulsion
@@ -720,6 +724,9 @@ int main(int argc, char *argv[])
                                  world.drone.x, world.drone.y);
                 }
                 wall_active_prev = wall_active;
+
+                // Update repulsion tracker
+                rep_active_prev = rep_active;
             }
         }
 
