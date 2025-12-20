@@ -1,7 +1,7 @@
 // Targets process.
 // Generates targets over time and sends them periodically to bb_server
 // via an anonymous pipe. bb_server stores them in WorldState and uses them
-// for drawing / scoring / repulsion in Phase 3.
+// for drawing / scoring / scoring.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +13,7 @@
 #include "sim_ipc.h"
 #include "sim_params.h"
 #include "sim_log.h"
-#include "sim_const.h"  
+#include "sim_const.h"
 
 // Flag set by the SIGINT handler to request a clean shutdown
 static volatile sig_atomic_t running = 1;
@@ -27,7 +27,7 @@ static void handle_sigint(int sig)
 // keep target generation in one place
 static void generate_random_target(Target *t, const SimParams *params, double radius, int id)
 {
-    double margin = radius;  
+    double margin = radius;
 
     double x_range = (double)params->world_width  - 2.0 * margin;
     double y_range = (double)params->world_height - 2.0 * margin;
@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
 
     int fd_tgt_out = atoi(argv[SIM_ARG_TGT_OUT]);
 
-    // Load runtime parameters for targets 
+    // Load runtime parameters for targets
     if (sim_params_load(NULL) != 0) {
         sim_log_info("targets: warning: could not load '%s', using built-in defaults",
                      SIM_PARAMS_DEFAULT_PATH);
@@ -65,23 +65,17 @@ int main(int argc, char *argv[])
 
     const SimParams *params = sim_params_get();
 
-    // num_targets is treated as the hard cap
+    // IMPORTANT:
+    // In this codebase the hard cap is stored in params->num_targets.
+    // Your config key "max_targets" is parsed into num_targets in sim_params.c.
     int max_targets = params->num_targets;
-    if (max_targets < 0) {
-        max_targets = 0; 
-    }
-    if (max_targets > SIM_MAX_TARGETS) {
-        max_targets = SIM_MAX_TARGETS; 
-    }
+    if (max_targets < 0) max_targets = 0;
+    if (max_targets > SIM_MAX_TARGETS) max_targets = SIM_MAX_TARGETS;
 
     // how many we start with
     int active_count = params->initial_targets;
-    if (active_count < 0) {
-        active_count = 0;
-    }
-    if (active_count > max_targets) {
-        active_count = max_targets; 
-    }
+    if (active_count < 0) active_count = 0;
+    if (active_count > max_targets) active_count = max_targets;
 
     sim_log_info("targets: started (world=%dx%d, initial=%d, max=%d, spawn_interval=%.2f)",
                  params->world_width,
@@ -103,17 +97,15 @@ int main(int argc, char *argv[])
     // Seed RNG with time and PID to avoid identical maps across runs
     srand((unsigned)time(NULL) ^ (unsigned)getpid());
 
-    // Simple static targets: random positions in the world, fixed radius
     const double radius = 1.0;
-
-    int next_id = 1; // monotonically increasing id for new targets
+    int next_id = 1;
 
     // Initialize the active targets
     for (int i = 0; i < active_count; ++i) {
         generate_random_target(&targets[i], params, radius, next_id++);
     }
 
-    // Mark unused slots as inactive
+    // Mark unused slots as inactive (only up to max_targets; rest ignored)
     for (int i = active_count; i < max_targets; ++i) {
         targets[i].x      = 0.0;
         targets[i].y      = 0.0;
@@ -139,7 +131,7 @@ int main(int argc, char *argv[])
     sim_log_info("targets: sent initial %d/%d targets to bb_server",
                  active_count, max_targets);
 
-    // Precompute sleep interval as timespec
+    // Sleep interval
     double interval = params->target_spawn_interval;
     if (interval <= 0.0) {
         interval = SIM_DEFAULT_TARGET_SPAWN_INTERVAL;
@@ -148,22 +140,15 @@ int main(int argc, char *argv[])
     struct timespec sleep_ts;
     sleep_ts.tv_sec  = (time_t)interval;
     sleep_ts.tv_nsec = (long)((interval - (double)sleep_ts.tv_sec) * 1e9);
-    if (sleep_ts.tv_nsec < 0) {
-        sleep_ts.tv_nsec = 0;
-    }
+    if (sleep_ts.tv_nsec < 0) sleep_ts.tv_nsec = 0;
 
-    int oldest_index = 0; 
+    int oldest_index = 0;
 
-    // Main spawn/update loop: keep sending updated target sets
     while (running) {
         nanosleep(&sleep_ts, NULL);
-
-        if (!running) {
-            break;
-        }
+        if (!running) break;
 
         int idx;
-
         if (active_count < max_targets) {
             idx = active_count;
             active_count++;
@@ -179,7 +164,7 @@ int main(int argc, char *argv[])
         if (w != expected) {
             sim_log_info("targets: write_full(fd_tgt_out) failed in loop, returned %zd (expected %zd)",
                          w, expected);
-            break; 
+            break;
         }
 
         sim_log_info("targets: updated target at idx=%d (active=%d/%d, id=%d)",
