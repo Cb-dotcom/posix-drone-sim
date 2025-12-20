@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <string.h>
 
 #include "sim_types.h"
 #include "sim_ipc.h"
@@ -17,6 +18,37 @@
 
 // Flag set by the SIGINT handler to request a clean shutdown
 static volatile sig_atomic_t running = 1;
+
+
+static pid_t g_wd_pid = -1;
+
+static void wd_client_ping_handler(int sig)
+{
+    (void)sig;
+    if (g_wd_pid > 1) {
+        // reply to watchdog
+        (void)kill(g_wd_pid, SIGUSR2);
+    }
+}
+
+static void wd_client_init(void)
+{
+    const char *s = getenv("SIM_WD_PID");
+    if (!s) return;
+
+    g_wd_pid = (pid_t)strtol(s, NULL, 10);
+    if (g_wd_pid <= 1) return;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = wd_client_ping_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    // Watchdog pings us with SIGUSR1
+    (void)sigaction(SIGUSR1, &sa, NULL);
+}
+
 
 static void handle_sigint(int sig)
 {
@@ -49,6 +81,8 @@ int main(int argc, char *argv[])
 {
     sim_log_init("targets");
     signal(SIGINT, handle_sigint);
+    wd_client_init();
+
 
     if (argc < 2) {
         sim_log_info("targets: usage error: expected fd_targets_out argument");

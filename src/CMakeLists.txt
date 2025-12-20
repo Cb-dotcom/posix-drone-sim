@@ -27,8 +27,9 @@ add_executable(drone     drone.c)
 add_executable(input     input.c)
 add_executable(obstacles obstacles.c)
 add_executable(targets   targets.c)
+add_executable(watchdog  watchdog.c)
 
-set(SIM_EXECUTABLES master bb_server drone input obstacles targets)
+set(SIM_EXECUTABLES master bb_server drone input obstacles targets watchdog)
 
 foreach(target ${SIM_EXECUTABLES})
     target_link_libraries(${target}

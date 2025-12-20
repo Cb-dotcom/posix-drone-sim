@@ -34,7 +34,7 @@ fi
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR"
 
 # Build targets
-cmake --build "$BUILD_DIR" --target master bb_server drone input obstacles targets
+cmake --build "$BUILD_DIR" --target master bb_server drone input obstacles targets watchdog
 
 # Sanity check
 if [[ ! -x "$BIN_DIR/master" ]]; then

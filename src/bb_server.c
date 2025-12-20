@@ -8,6 +8,7 @@
 #include <curses.h>
 #include <math.h>
 #include <time.h>
+#include <string.h>
 
 #include "sim_types.h"
 #include "sim_ipc.h"
@@ -19,6 +20,57 @@
 // Tune this to match your drone "size" in world coordinates.
 // If your UI draws the drone as a 1x1 cell, 0.5 is usually right.
 #define DRONE_RADIUS 0.5
+
+static pid_t g_wd_pid = -1;
+
+#include <unistd.h>
+#include <stdlib.h>
+#include "sim_ipc.h"
+
+static void report_pid_if_requested(int argc, char **argv)
+{
+    // convention: last arg is pid_report_fd
+    // example: ./bb_server ... <pid_report_fd>
+    if (argc < 2) return;
+
+    char *end = NULL;
+    long fd = strtol(argv[argc - 1], &end, 10);
+    if (!end || *end != '\0') return;
+    if (fd < 0) return;
+
+    pid_t me = getpid();
+    (void)write_full((int)fd, &me, sizeof(me));
+    close((int)fd);
+}
+
+
+static void wd_client_ping_handler(int sig)
+{
+    (void)sig;
+    if (g_wd_pid > 1) {
+        // reply to watchdog
+        (void)kill(g_wd_pid, SIGUSR2);
+    }
+}
+
+static void wd_client_init(void)
+{
+    const char *s = getenv("SIM_WD_PID");
+    if (!s) return;
+
+    g_wd_pid = (pid_t)strtol(s, NULL, 10);
+    if (g_wd_pid <= 1) return;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = wd_client_ping_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    // Watchdog pings us with SIGUSR1
+    (void)sigaction(SIGUSR1, &sa, NULL);
+}
+
 
 static volatile sig_atomic_t running = 1;
 
@@ -276,6 +328,9 @@ int main(int argc, char *argv[])
 {
     sim_log_init("bb_server");
     signal(SIGINT, handle_sigint);
+    report_pid_if_requested(argc, argv);
+    wd_client_init();
+
 
     // background music
     pid_t music = fork();
