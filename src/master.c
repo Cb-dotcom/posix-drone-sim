@@ -17,11 +17,12 @@ int main(void)
                 SIM_PARAMS_DEFAULT_PATH);
     }
 
-    int pipe_drone_cmd[2];    // bb_server -> drone (CommandState)
-    int pipe_drone_state[2];  // drone -> bb_server (DroneState)
-    int pipe_input_cmd[2];    // input -> bb_server (CommandState)
-    int pipe_obstacles[2];    // obstacles -> bb_server (Obstacle[])
-    int pipe_targets[2];      // targets   -> bb_server (Target[])
+    int pipe_drone_cmd[2];          // bb_server -> drone (CommandState)
+    int pipe_drone_state[2];        // drone -> bb_server (DroneState)
+    int pipe_input_cmd[2];          // input -> bb_server (CommandState)
+    int pipe_obstacles[2];          // obstacles -> bb_server (Obstacle[])
+    int pipe_targets[2];            // targets   -> bb_server (Target[])
+    int pipe_obstacles_drone[2];    // obstacles -> drone (Obstacle[])   [NEW]
 
     if (pipe(pipe_drone_cmd) == -1) {
         perror("master: pipe_drone_cmd");
@@ -43,6 +44,10 @@ int main(void)
         perror("master: pipe_targets");
         return EXIT_FAILURE;
     }
+    if (pipe(pipe_obstacles_drone) == -1) {
+        perror("master: pipe_obstacles_drone");
+        return EXIT_FAILURE;
+    }
 
     // bb_server
     pid_t bb_pid = fork();
@@ -52,7 +57,6 @@ int main(void)
     }
 
     if (bb_pid == 0) {
-        // Child: bb_server in its own Konsole window
         // Keep:
         //   pipe_drone_state[0]
         //   pipe_drone_cmd[1]
@@ -60,12 +64,15 @@ int main(void)
         //   pipe_obstacles[0]
         //   pipe_targets[0]
 
-        // Close unused ends in this child
         close(pipe_drone_state[1]);
         close(pipe_drone_cmd[0]);
         close(pipe_input_cmd[1]);
         close(pipe_obstacles[1]);
         close(pipe_targets[1]);
+
+        // NEW pipe not used by bb_server
+        close(pipe_obstacles_drone[0]);
+        close(pipe_obstacles_drone[1]);
 
         char fd_drone_state_in[16];
         char fd_drone_cmd_out[16];
@@ -79,7 +86,6 @@ int main(void)
         snprintf(fd_obs_in,          sizeof(fd_obs_in),          "%d", pipe_obstacles[0]);
         snprintf(fd_tgt_in,          sizeof(fd_tgt_in),          "%d", pipe_targets[0]);
 
-        // Konsole -T "BB_SERVER" -e ./bb_server <fds...>
         execlp("konsole", "konsole",
                "-T", "BB_SERVER",
                "-e", "./bb_server",
@@ -90,7 +96,6 @@ int main(void)
                fd_tgt_in,
                (char *)NULL);
 
-        // Fallback: run directly if Konsole is unavailable
         execl("./bb_server", "./bb_server",
               fd_drone_state_in,
               fd_drone_cmd_out,
@@ -111,8 +116,6 @@ int main(void)
     }
 
     if (input_pid == 0) {
-        // Keep: pipe_input_cmd[1]
-        // Close unused ends
         close(pipe_input_cmd[0]);
         close(pipe_drone_cmd[0]);
         close(pipe_drone_cmd[1]);
@@ -123,17 +126,19 @@ int main(void)
         close(pipe_targets[0]);
         close(pipe_targets[1]);
 
+        // NEW pipe unused by input
+        close(pipe_obstacles_drone[0]);
+        close(pipe_obstacles_drone[1]);
+
         char fd_cmd_out[16];
         snprintf(fd_cmd_out, sizeof(fd_cmd_out), "%d", pipe_input_cmd[1]);
 
-        // Konsole -T "INPUT" -e ./input <fd_cmd_out>
         execlp("konsole", "konsole",
                "-T", "INPUT",
                "-e", "./input",
                fd_cmd_out,
                (char *)NULL);
 
-        // Fallback: run directly
         execl("./input", "./input", fd_cmd_out, (char *)NULL);
 
         perror("master: exec input");
@@ -149,26 +154,35 @@ int main(void)
 
     if (drone_pid == 0) {
         // Keep:
-        //   cmd_in:    pipe_drone_cmd[0] (read)
-        //   state_out: pipe_drone_state[1] (write)
+        //   cmd_in:    pipe_drone_cmd[0]
+        //   state_out: pipe_drone_state[1]
+        //   obs_in:    pipe_obstacles_drone[0]   [NEW]
 
-        // Close unused ends
         close(pipe_drone_cmd[1]);
         close(pipe_drone_state[0]);
+
         close(pipe_input_cmd[0]);
         close(pipe_input_cmd[1]);
+
         close(pipe_obstacles[0]);
         close(pipe_obstacles[1]);
+
         close(pipe_targets[0]);
         close(pipe_targets[1]);
 
+        close(pipe_obstacles_drone[1]); // keep read end
+        // keep pipe_obstacles_drone[0]
+
         char fd_cmd_in[16];
         char fd_state_out[16];
+        char fd_obs_in[16];
 
         snprintf(fd_cmd_in,    sizeof(fd_cmd_in),    "%d", pipe_drone_cmd[0]);
         snprintf(fd_state_out, sizeof(fd_state_out), "%d", pipe_drone_state[1]);
+        snprintf(fd_obs_in,    sizeof(fd_obs_in),    "%d", pipe_obstacles_drone[0]);
 
-        execl("./drone", "./drone", fd_cmd_in, fd_state_out, (char *)NULL);
+        // NEW: pass 3rd arg = obstacles fd
+        execl("./drone", "./drone", fd_cmd_in, fd_state_out, fd_obs_in, (char *)NULL);
 
         perror("master: exec drone");
         _exit(EXIT_FAILURE);
@@ -182,18 +196,27 @@ int main(void)
     }
 
     if (obstacles_pid == 0) {
-        // Keep: pipe_obstacles[1] (write to bb_server)
-        // Close all other ends
+        // Keep:
+        //   pipe_obstacles[1]        -> bb_server
+        //   pipe_obstacles_drone[1]  -> drone     [NEW]
+
         close(pipe_obstacles[0]);
+        close(pipe_obstacles_drone[0]);
+
         close(pipe_drone_cmd[0]);   close(pipe_drone_cmd[1]);
         close(pipe_drone_state[0]); close(pipe_drone_state[1]);
         close(pipe_input_cmd[0]);   close(pipe_input_cmd[1]);
         close(pipe_targets[0]);     close(pipe_targets[1]);
 
-        char fd_obs_out[16];
-        snprintf(fd_obs_out, sizeof(fd_obs_out), "%d", pipe_obstacles[1]);
+        char fd_obs_out_bb[16];
+        char fd_obs_out_drone[16];
 
-        execl("./obstacles", "./obstacles", fd_obs_out, (char *)NULL);
+        snprintf(fd_obs_out_bb,    sizeof(fd_obs_out_bb),    "%d", pipe_obstacles[1]);
+        snprintf(fd_obs_out_drone, sizeof(fd_obs_out_drone), "%d", pipe_obstacles_drone[1]);
+
+        // NEW: pass both FDs
+        execl("./obstacles", "./obstacles", fd_obs_out_bb, fd_obs_out_drone, (char *)NULL);
+
         perror("master: exec obstacles");
         _exit(EXIT_FAILURE);
     }
@@ -206,13 +229,15 @@ int main(void)
     }
 
     if (targets_pid == 0) {
-        // Keep: pipe_targets[1] (write to bb_server)
-        // Close all other ends
         close(pipe_targets[0]);
         close(pipe_drone_cmd[0]);   close(pipe_drone_cmd[1]);
         close(pipe_drone_state[0]); close(pipe_drone_state[1]);
         close(pipe_input_cmd[0]);   close(pipe_input_cmd[1]);
         close(pipe_obstacles[0]);   close(pipe_obstacles[1]);
+
+        // NEW pipe unused by targets
+        close(pipe_obstacles_drone[0]);
+        close(pipe_obstacles_drone[1]);
 
         char fd_tgt_out[16];
         snprintf(fd_tgt_out, sizeof(fd_tgt_out), "%d", pipe_targets[1]);
@@ -228,6 +253,7 @@ int main(void)
     close(pipe_input_cmd[0]);   close(pipe_input_cmd[1]);
     close(pipe_obstacles[0]);   close(pipe_obstacles[1]);
     close(pipe_targets[0]);     close(pipe_targets[1]);
+    close(pipe_obstacles_drone[0]); close(pipe_obstacles_drone[1]);
 
     // Wait for children
     int status;
