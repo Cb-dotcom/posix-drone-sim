@@ -54,18 +54,14 @@ static void apply_world_bounds(DroneState *d, double world_width, double world_h
 {
     if (d->x < 0.0) {
         d->x = 0.0;
-        if (d->vx < 0.0) d->vx = 0.0;
     } else if (d->x > world_width) {
         d->x = world_width;
-        if (d->vx > 0.0) d->vx = 0.0;
     }
 
     if (d->y < 0.0) {
         d->y = 0.0;
-        if (d->vy < 0.0) d->vy = 0.0;
     } else if (d->y > world_height) {
         d->y = world_height;
-        if (d->vy > 0.0) d->vy = 0.0;
     }
 }
 
