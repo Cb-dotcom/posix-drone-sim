@@ -6,8 +6,8 @@
 #include <sys/select.h>
 #include <fcntl.h>
 #include <curses.h>
-#include <math.h>   
-#include <time.h>   
+#include <math.h>
+#include <time.h>
 
 #include "sim_types.h"
 #include "sim_ipc.h"
@@ -16,10 +16,10 @@
 #include "sim_ui.h"
 #include "sim_params.h"
 
-// Crucial integer type used for providing variables that can be 
+// Crucial integer type used for providing variables that can be
 // read and written by both the main prog and sign handler
-// without introducing race conditions. 
-static volatile sig_atomic_t running = 1; 
+// without introducing race conditions.
+static volatile sig_atomic_t running = 1;
 
 void play(const char *filename) {
     pid_t pid = fork();
@@ -185,7 +185,8 @@ static void compute_obstacle_repulsion(const WorldState *world,
     double vx = world->drone.vx;
     double vy = world->drone.vy;
 
-    for (int i = 0; i < world->num_obstacles; ++i) {
+    // NOTE: loop over slots received, not active count.
+    for (int i = 0; i < world->obstacles_slots; ++i) {
         const Obstacle *obs = &world->obstacles[i];
         if (!obs->active) {
             continue;
@@ -301,7 +302,8 @@ static void handle_targets(WorldState *world,
     // Hit radius in world coordinates (tweakable).
     const double HIT_RADIUS = 1.0;
 
-    for (int i = 0; i < world->num_targets; ++i) {
+    // NOTE: loop over slots received, not active count.
+    for (int i = 0; i < world->targets_slots; ++i) {
         Target *tgt = &world->targets[i];
         if (!tgt->active) {
             continue;
@@ -351,14 +353,12 @@ int main(int argc, char *argv[])
             if (fd > 2) close(fd);
         }
 
-        // Try MP3 looping with mpg123 
+        // Try MP3 looping with mpg123
         execlp("mpg123", "mpg123", "-f", "4098", "--loop", "-1", "../../bin/conf/music.mp3", (char *)NULL);
 
-      
         perror("Music!");
-        _exit(1);  
-    } 
-
+        _exit(1);
+    }
 
     // Load parameters in this process (master's load does not carry across exec)
     if (sim_params_load(NULL) != 0) {
@@ -428,7 +428,8 @@ int main(int argc, char *argv[])
 
     user_cmd = world.cmd;
 
-    world.num_obstacles = 0;
+    world.num_obstacles   = 0;
+    world.obstacles_slots = 0;
     for (int i = 0; i < SIM_MAX_OBSTACLES; ++i) {
         world.obstacles[i].x      = 0.0;
         world.obstacles[i].y      = 0.0;
@@ -436,7 +437,8 @@ int main(int argc, char *argv[])
         world.obstacles[i].active = 0;
     }
 
-    world.num_targets = 0;
+    world.num_targets   = 0;
+    world.targets_slots = 0;
     for (int i = 0; i < SIM_MAX_TARGETS; ++i) {
         world.targets[i].x      = 0.0;
         world.targets[i].y      = 0.0;
@@ -511,6 +513,10 @@ int main(int argc, char *argv[])
     } else if (tgt_to_read < 0) {
         tgt_to_read = 0;
     }
+
+    // Record slot counts received from generators (loop bounds)
+    world.obstacles_slots = obs_to_read;
+    world.targets_slots   = tgt_to_read;
 
     // Main display + IPC loop (pipe-based, no shared memory)
     while (running) {
@@ -623,6 +629,7 @@ int main(int argc, char *argv[])
                     sim_log_info("bb_server: obstacles pipe EOF");
                     // Keep last known obstacles, just don't expect more updates
                     obs_to_read = 0;
+                    world.obstacles_slots = 0;
                 } else if (r < 0) {
                     endwin();
                     perror("bb_server: read_full(obstacles)");
@@ -648,6 +655,7 @@ int main(int argc, char *argv[])
                 } else if (r == 0) {
                     sim_log_info("bb_server: targets pipe EOF");
                     tgt_to_read = 0;
+                    world.targets_slots = 0;
                 } else if (r < 0) {
                     endwin();
                     perror("bb_server: read_full(targets)");

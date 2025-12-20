@@ -2,10 +2,10 @@
 #include <locale.h>
 #include <ncurses.h>
 #include <string.h>
-#include <unistd.h>  
-#include <sys/types.h> 
-#include <fcntl.h>      
-#include <stdlib.h>     
+#include <unistd.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <stdlib.h>
 
 #include "sim_ui.h"
 #include "sim_const.h"
@@ -127,14 +127,14 @@ static int show_menu_internal(void)
 
         ch = wgetch(menu_win);
         switch (ch) {
-            case KEY_UP:    
+            case KEY_UP:
                 play_sfx("../../bin/conf/scroll.mp3");
-                if (choice > 0) choice--; 
+                if (choice > 0) choice--;
                 break;
 
-            case KEY_DOWN:  
+            case KEY_DOWN:
                 play_sfx("../../bin/conf/scroll.mp3");
-                if (choice < n_options - 1) choice++; 
+                if (choice < n_options - 1) choice++;
                 break;
 
             case '\n':
@@ -211,7 +211,7 @@ void ui_init(void)
     refresh();
 }
 
-// For defs check sim_ui.h 
+// For defs check sim_ui.h
 void ui_shutdown(void)
 {
     if (map_win) {
@@ -284,7 +284,7 @@ void ui_draw(const WorldState *world)
     // row 4 is left empty as a visual spacer; map border starts at row 5
 
     // Draw obstacles as '#'
-    for (int i = 0; i < world->num_obstacles; ++i) {
+    for (int i = 0; i < world->obstacles_slots; ++i) {
         if (!world->obstacles[i].active)
             continue;
 
@@ -308,7 +308,7 @@ void ui_draw(const WorldState *world)
     }
 
     // Draw targets as '+'
-    for (int i = 0; i < world->num_targets; ++i) {
+    for (int i = 0; i < world->targets_slots; ++i) {
         if (!world->targets[i].active)
             continue;
 
@@ -332,7 +332,7 @@ void ui_draw(const WorldState *world)
     }
 
     // Draw drone symbol at mapped position inside the map window
-    mvwaddch(map_win, py, px, '@'); 
+    mvwaddch(map_win, py, px, '@');
 
     refresh();
     wrefresh(map_win);

@@ -57,10 +57,12 @@ typedef struct {
     DroneState   drone; 
     CommandState cmd; 
 
-    int          num_obstacles;
+    int          num_obstacles;        
+    int          obstacles_slots;      
     Obstacle     obstacles[SIM_MAX_OBSTACLES];
 
-    int          num_targets;
+    int          num_targets;          
+    int          targets_slots;        
     Target       targets[SIM_MAX_TARGETS];
 
     double       score;
