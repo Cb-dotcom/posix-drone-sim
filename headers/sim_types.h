@@ -56,6 +56,9 @@ typedef struct {
 typedef struct {
     DroneState   drone; 
     CommandState cmd; 
+    
+    int world_width;
+    int world_height;
 
     int          num_obstacles;        
     int          obstacles_slots;      

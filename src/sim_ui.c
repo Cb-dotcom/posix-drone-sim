@@ -244,18 +244,24 @@ void ui_draw(const WorldState *world)
     werase(map_win);
     box(map_win, 0, 0);
 
+    // Use runtime world dimensions provided by bb_server
+    double ww = (double)world->world_width;
+    double wh = (double)world->world_height;
+    if (ww <= 1.0) ww = 1.0;
+    if (wh <= 1.0) wh = 1.0;
+
     // Map drone position into world bounds
     double wx = world->drone.x;
     double wy = world->drone.y;
 
     if (wx < 0.0) wx = 0.0;
-    if (wx > SIM_WORLD_WIDTH)  wx = SIM_WORLD_WIDTH;
+    if (wx > ww)  wx = ww;
     if (wy < 0.0) wy = 0.0;
-    if (wy > SIM_WORLD_HEIGHT) wy = SIM_WORLD_HEIGHT;
+    if (wy > wh)  wy = wh;
 
     // Map world coords to interior of map window (1..W-2, 1..H-2)
-    int px = 1 + (int)((wx / SIM_WORLD_WIDTH)  * (W - 2));
-    int py = 1 + (int)((wy / SIM_WORLD_HEIGHT) * (H - 2));
+    int px = 1 + (int)((wx / ww) * (W - 2));
+    int py = 1 + (int)((wy / wh) * (H - 2));
 
     if (px < 1) px = 1;
     if (px > W - 2) px = W - 2;
@@ -292,12 +298,12 @@ void ui_draw(const WorldState *world)
         double oy = world->obstacles[i].y;
 
         if (ox < 0.0) ox = 0.0;
-        if (ox > SIM_WORLD_WIDTH)  ox = SIM_WORLD_WIDTH;
+        if (ox > ww)  ox = ww;
         if (oy < 0.0) oy = 0.0;
-        if (oy > SIM_WORLD_HEIGHT) oy = SIM_WORLD_HEIGHT;
+        if (oy > wh)  oy = wh;
 
-        int opx = 1 + (int)((ox / SIM_WORLD_WIDTH)  * (W - 2));
-        int opy = 1 + (int)((oy / SIM_WORLD_HEIGHT) * (H - 2));
+        int opx = 1 + (int)((ox / ww) * (W - 2));
+        int opy = 1 + (int)((oy / wh) * (H - 2));
 
         if (opx < 1 || opx > W - 2 || opy < 1 || opy > H - 2)
             continue;
@@ -316,12 +322,12 @@ void ui_draw(const WorldState *world)
         double ty = world->targets[i].y;
 
         if (tx < 0.0) tx = 0.0;
-        if (tx > SIM_WORLD_WIDTH)  tx = SIM_WORLD_WIDTH;
+        if (tx > ww)  tx = ww;
         if (ty < 0.0) ty = 0.0;
-        if (ty > SIM_WORLD_HEIGHT) ty = SIM_WORLD_HEIGHT;
+        if (ty > wh)  ty = wh;
 
-        int tpx = 1 + (int)((tx / SIM_WORLD_WIDTH)  * (W - 2));
-        int tpy = 1 + (int)((ty / SIM_WORLD_HEIGHT) * (H - 2));
+        int tpx = 1 + (int)((tx / ww) * (W - 2));
+        int tpy = 1 + (int)((ty / wh) * (H - 2));
 
         if (tpx < 1 || tpx > W - 2 || tpy < 1 || tpy > H - 2)
             continue;

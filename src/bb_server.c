@@ -418,6 +418,8 @@ int main(int argc, char *argv[])
     world.drone.y  = 0.0;
     world.drone.vx = 0.0;
     world.drone.vy = 0.0;
+    world.world_width  = params->world_width;
+    world.world_height = params->world_height;
 
     world.cmd.fx       = 0.0;
     world.cmd.fy       = 0.0;
