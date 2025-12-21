@@ -33,6 +33,9 @@ static int read_pid_from_pipe(int rfd, pid_t *out_pid, const char *who)
 
 int main(void)
 {
+    unlink("../../bin/log/processes.log"); // Ensure fresh shared log on startup
+    sim_log_init("master");
+    
     // Load runtime parameters from config file (or fall back to defaults)
     if (sim_params_load(NULL) != 0) {
         fprintf(stderr,
