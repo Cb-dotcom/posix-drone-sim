@@ -4,62 +4,56 @@
 <details>
   <summary>View Dropdown</summary>
   <ol>
-    <li><a href="#posix-drone-simulator---assignment-1">POSIX Drone Simulator – Assignment 1</a></li>
-    <li><a href="#posix-drone-simulator-in-action">POSIX Drone Simulator in action</a></li>
+    <li><a href="#posix-drone-simulator---assignment-2">POSIX Drone Simulator – Assignment 2</a></li>
     <li><a href="#beloved-contributors">Beloved Contributors</a></li>
     <li><a href="#detailed-description">Detailed Description</a>
       <ul>
+        <li><a href="#assignment-2-overview">Assignment 2 Overview</a></li>
         <li><a href="#how-to-build-and-run">How to build and run</a>
           <ul>
             <li><a href="#prerequisites">Prerequisites</a></li>
             <li><a href="#build">Build</a></li>
           </ul>
         </li>
-        <li><a href="#how-does-it-work">How does it work</a>
+        <li><a href="#watchdog-implementation">Watchdog Implementation</a>
           <ul>
-            <li><a href="#architecture">Architecture</a></li>
-            <li><a href="#active-components">Active components</a></li>
-            <li><a href="#masterc">master.c</a></li>
-            <li><a href="#bb-server">bb_server</a></li>
-            <li><a href="#drone">drone</a></li>
-            <li><a href="#input">input</a></li>
-            <li><a href="#obstacles">obstacles</a></li>
-            <li><a href="#targets">targets</a></li>
-            <li><a href="#controls">Controls</a></li>
-            <li><a href="#simulation-model-and-logic">Simulation model and logic</a></li>
-            <li><a href="#drone-dynamics">Drone dynamics</a></li>
-            <li><a href="#user-commands-and-force-mapping">User commands and force mapping</a></li>
-            <li><a href="#environment--obstacles-and-targets">Environment: obstacles and targets</a></li>
-            <li><a href="#potential-field-repulsion">Potential-field repulsion</a></li>
-            <li><a href="#target-scoring">Target scoring</a></li>
-            <li><a href="#configuration-file">Configuration file</a></li>
+            <li><a href="#watchdog-architecture">Watchdog Architecture</a></li>
+            <li><a href="#watchdog-process">Watchdog Process</a></li>
+            <li><a href="#ping-ack-protocol">Ping-Ack Protocol</a></li>
+            <li><a href="#fault-detection-and-recovery">Fault Detection and Recovery</a></li>
+            <li><a href="#pid-handshake-mechanism">PID Handshake Mechanism</a></li>
           </ul>
         </li>
-        <li><a href="#project-architecture">Project Architecture</a></li>
-        <li><a href="#git-history-and-evolution">Git history and evolution</a>
+        <li><a href="#logging-system">Logging System</a>
           <ul>
-            <li><a href="#phase-1">Phase 1</a></li>
-            <li><a href="#phase-migration">Phase Migration</a></li>
-            <li><a href="#phase-migration-2">Phase_Migration_2</a></li>
-            <li><a href="#phase-3">Phase 3</a></li>
-            <li><a href="#phase-extra">Phase Extra</a></li>
+            <li><a href="#log-file-organization">Log File Organization</a></li>
+            <li><a href="#file-locking-mechanism">File Locking Mechanism</a></li>
+            <li><a href="#logging-api">Logging API</a></li>
           </ul>
         </li>
+        <li><a href="#integration-with-existing-system">Integration with Existing System</a>
+          <ul>
+            <li><a href="#master-process-changes">Master Process Changes</a></li>
+            <li><a href="#client-process-integration">Client Process Integration</a></li>
+          </ul>
+        </li>
+        <li><a href="#configuration">Configuration</a></li>
       </ul>
     </li>
+    <li><a href="#project-architecture">Project Architecture</a></li>
   </ol>
 </details>
 <br>
 
-# POSIX Drone Simulator - Assignment 1
+# POSIX Drone Simulator - Assignment 2
 
-This repository contains the implementation for the first ARP course assignment: a `multi-process` drone game simulator utilizing `POSIX IPC` and the `ncurses` library. The key idea of this project is controlling the drone which is a **2D point mass** with inertia and viscous damping.To do so, multiple **independent processes** cooperate via **anonymous pipes** and the detailed implementation will be covered down below. 
+This repository contains the implementation for the **second ARP course assignment**, which extends the multi-process drone simulator from Assignment 1 with two key reliability features:
 
-# POSIX Drone Simulator in action 
+1. **Watchdog Process**: A monitoring system that continuously checks the health of all simulation processes and takes corrective action when failures are detected.
 
-[Video Demo](https://youtu.be/tNpgaJHzdXw?si=1cfWcafKvvoCbWzo)
+2. **Enhanced Logging System**: A file-based logging infrastructure with proper synchronization for concurrent writes, featuring separate logs for the watchdog and shared logs for simulation processes.
 
-![Nice pic](files/image.png)
+The foundation of this project is the multi-process drone simulator built in Assignment 1, which uses **POSIX IPC** (anonymous pipes), **ncurses** for UI, and simulates a 2D drone with physics-based dynamics. Assignment 2 focuses specifically on adding fault tolerance and observability to this existing system.
 
 # Beloved Contributors
 
@@ -70,346 +64,319 @@ This repository contains the implementation for the first ARP course assignment:
 
 # Detailed Description
 
+## Assignment 2 Overview
+
+Assignment 2 introduces reliability and monitoring capabilities to the drone simulator. The key additions are:
+
+**Watchdog System:**
+- A dedicated watchdog process that monitors all simulation processes
+- Periodic health checks using signal-based ping-ack protocol
+- Automatic fault detection and system shutdown on failures
+- Protection against hung or crashed processes
+
+**Logging Infrastructure:**
+- File-based logging with timestamps and process identification
+- Separate log files for watchdog and simulation processes
+- File locking (`flock`) to prevent concurrent write corruption
+- Persistent logs that survive across multiple simulation runs
+
+These features ensure the simulator can detect and respond to process failures while maintaining detailed logs for debugging and analysis.
+
 ## How to build and run
 
 ### Prerequisites
 
-- POSIX system (Linux recommended).
-- C toolchain (`gcc` or compatible).
-- **CMake** ≥ 3.x.
-- **ncurses** development libraries.
-- **Konsole** terminal emulator (or adjust `master.c` / `run.sh` to your terminal of choice).
-- **mpg123** (optional but recommended) for background music and sound effects.
+- POSIX system (Linux recommended)
+- C toolchain (`gcc` or compatible)
+- **CMake** ≥ 3.x
+- **ncurses** development libraries
+- **Konsole** terminal emulator (or adjust to your terminal of choice)
+- **mpg123** (optional) for sound effects
 
 ### Build
 
 From the project root:
 
-```
+```bash
 ./run.sh 
 ```
 
-## How does it work
-
-### Architecture
-
-![Archtecture Schema](files/Architecture.png)
-
-At runtime, the simulator consists of:
-
-- one orchestrator process: `master.c`
-- one blackboard and UI process: `bb_server.c`
-- four worker processes: `drone.c`, `input.c`, `obstacles.c`, `targets.c`
-
-All inter-process communication uses anonymous pipes created by `master.c`.
-
-The pipes carry:
-
-- `CommandState`: user forces and control flags
-- `DroneState`: position and velocity
-- `Obstacle[]`: snapshot of all obstacles
-- `Target[]`: snapshot of all targets
-
-`bb_server.c` is the central blackboard:
-
-- collects information from all other processes
-- computes environment forces from walls and obstacles
-- handles scoring and target respawn
-- sends final commands to the drone
-- renders everything using `ncurses`
-
-### Active components
-
-The active components of this project are:
-
-- `master.c`
-- `bb_server.c`
-- `drone.c`
-- `input.c`
-- `obstacles.c`
-- `targets.c`
-
-All of them load the same runtime parameters from `bin/conf/drone_parameters.conf` and log to their own file in `bin/log/`.
-
-### master.c
-- entry point of the system
-- creates all anonymous pipes:
-    - `pipe_drone_cmd` (bb_server to drone)
-    - `pipe_drone_state` (drone to bb_server)
-    - `pipe_input_cmd` (input to bb_server)
-    - `pipe_obstacles` (obstacles to bb_server)
-    - `pipe_targets` (targets to bb_server)
-- spawns:
-    - `bb_server` in a dedicated terminal window
-    - `input` in a dedicated terminal window
-    - `drone`, `obstacles`, `targets` in the background
-- closes all unused pipe ends and waits for children to exit
-
-### bb_server
-- owns the authoritative world state:
-    - `DroneState`
-    - current `CommandState`
-    - arrays of obstacles and targets
-    - score and UI related data
-- central blackboard and UI:
-    - receives:
-        - `CommandState` from `input`
-        - `DroneState` from `drone`
-        - `Obstacle[]` from `obstacles`
-        - `Target[]` from `targets`
-    - computes environment forces from walls and obstacles
-    - handles hits on targets and scoring
-    - renders the map, legend and score using `ncurses`
-- audio:
-    - plays looping background music via `mpg123` in a detached child process
-
-### drone
-- simulates the drone as a 2D point mass with damping
-- receives `CommandState` from `bb_server` (user forces combined with repulsion)
-- integrates dynamics and enforces:
-    - world bounds
-    - deadzone on small velocities to remove jitter
-- sends updated `DroneState` to `bb_server`
-
-### input
-- `ncurses` control pad for the user
-- maps key presses to forces and control flags:
-  - directional forces 
-  - brake, reset, quit
-  - maintains a local `CommandState` (`fx`, `fy`, flags)
-  - sends `CommandState` to `bb_server` via a pipe
-  - plays sound effects for press, stop, reset, scroll and select actions
-
-### obstacles
-- maintains a dynamic set of obstacles in the world
-- respects:
-    - `max_obstacles`   
-    - `initial_obstacles`
-    - `obstacle_spawn_interval` in seconds
-- at startup:
-    - generates `initial_obstacles` random obstacles
-- periodically:
-    - activates a new obstacle while under the cap, or replaces the oldest
-    - sends the full `Obstacle[]` array to `bb_server`
-
-### targets
-- maintains a dynamic set of targets in the world
-- respects:
-    - `max_targets` (hard cap)
-    - `initial_targets`
-    - `target_spawn_interval` in seconds
-- at startup:
-    - generates `initial_targets` random targets
-- periodically:
-    - activates or replaces a target at a random position
-    - sends the full `Target[]` array to `bb_server`
-
-    
-### Controls
-
-Controls live in the `INPUT` window.
-
-Directional forces:
-
-```
-+-+-+---+---+        
-| q | w | e |        
-+---+---+---+        
-| a | s | d |  
-+---+---+---+
-| z | x | c |
-+-+-+---+---+
-```
-
-Special keys:
-
-- `s` or `SPACE`: brake, zero all forces
-- `r`: reset drone position to the world center
-- `Q`: quit, propagated to the rest of the system
-
-Each key press:
-
-- updates the local `CommandState`
-- plays a sound effect (press, stop, reset, target, scroll, select)
-- sends the updated `CommandState` to `bb_server` via the pipe
+The build script will:
+1. Check and install `mpg123` if needed (for audio)
+2. Configure the project with CMake
+3. Build all executables including the new `watchdog`
+4. Launch the master process which starts the entire system
 
 ---
 
-### Simulation model and logic
+## Watchdog Implementation
 
-### Drone dynamics
+### Watchdog Architecture
 
-The drone is modeled as a 2D point mass with linear damping:
+The watchdog is implemented as a separate process that runs independently from the simulation logic. It communicates with the master process via an anonymous pipe and with monitored processes via POSIX signals.
 
-$$\sum F = M \ddot{p} + K \dot{p}$$
+**Key Design Decisions:**
 
-$$p = (x, y)$$
+1. **Early Startup**: The watchdog is the first process spawned by master, before any simulation processes
+2. **Blocking Initialization**: The watchdog blocks on reading the PID list, ensuring it's ready before simulation starts
+3. **Signal-Based Communication**: Uses `SIGUSR1` for pings and `SIGUSR2` for acknowledgments
+4. **Centralized Fault Handling**: All fault detection logic is in the watchdog; monitored processes simply respond to pings
 
-$$\dot{p} = (v_x, v_y)$$
+### Watchdog Process
 
-where:
+The watchdog process implements health monitoring through a continuous cycle:
 
-- `p` is the position
-- `dot{p}` is the velocity
-- `M` is the mass
-- `K` is the damping coefficient
+**Initialization:**
+- Receives the number of processes to monitor from master via pipe
+- Receives the array of process IDs (PIDs) to monitor
+- Sets up signal handlers for receiving acknowledgments
 
-`drone.c` integrates this system with explicit Euler. 
+**Main Loop:**
+1. For each monitored process:
+   - Check if process is alive using `kill(pid, 0)`
+   - Send `SIGUSR1` ping signal
+   - Wait up to `WD_ACK_TIMEOUT_MS` for `SIGUSR2` acknowledgment
+   - If no ack or process is dead → kill all and exit
+2. Sleep for `WD_POLL_PERIOD_MS` before next round
 
-- world bounds are: $`[0, world\_ width] \times [0, world\_ height]`$
+**Configuration Parameters:**
 
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `WD_PING_SIGNAL` | `SIGUSR1` | Signal sent to processes for health check |
+| `WD_ACK_SIGNAL` | `SIGUSR2` | Signal expected back from processes |
+| `WD_POLL_PERIOD_MS` | 300 ms | Time between health check rounds |
+| `WD_ACK_TIMEOUT_MS` | 200 ms | Maximum wait time for acknowledgment |
+| `WD_MAX_PROCS` | 16 | Maximum number of processes to monitor |
 
-- when hitting a wall:
-    - position is clamped
-    - the velocity component pointing into the wall is set to zero
-- very small velocities are forced to zero to avoid visual jitter
+**Termination:**
+- On `SIGINT`: Clean exit
+- On fault detection: Sends `SIGKILL` to all monitored processes, then exits
 
-### User commands and force mapping
+### Ping-Ack Protocol
 
-`input.c` uses `ncurses` and maps keys to forces.
+The health check protocol is based on POSIX signals:
 
-Parameters from the configuration file:
+**Ping Phase (Watchdog → Process):**
+The watchdog sends `SIGUSR1` to each monitored process in sequence.
 
-- `force_step`: per key press increment
-- `max_force`: clamp on each force component
+**Ack Phase (Process → Watchdog):**
+Each process has a signal handler that immediately responds by sending `SIGUSR2` back to the watchdog.
 
-On each directional key press:
+**Protocol Properties:**
+- **Asynchronous**: Processes respond immediately via signal handler
+- **Lightweight**: Minimal overhead on simulation processes
+- **Timeout-Based**: Watchdog detects hung processes via timeout
+- **SA_RESTART**: Signal handlers use `SA_RESTART` to minimize system call interruption
 
-- `fx` and `fy` are incremented or decremented
-- values are clamped to the interval: $`[{-max\_ force}, {max\_ force}]`$
+### Fault Detection and Recovery
 
+The watchdog detects three types of failures:
 
-- `last_key` is updated
-- the new `CommandState` is sent to `bb_server`
+**1. Process Death:**
+Before sending a ping, the watchdog checks if the process is still alive. If not, the watchdog immediately kills all monitored processes.
 
-Special keys:
+**2. No Acknowledgment (Hung Process):**
+After sending a ping, if a process doesn't respond within the timeout period, the watchdog considers it hung and kills all monitored processes.
 
-- `s` or `SPACE`:
-    - `brake = 1`
-    - forces are set to zero
-- `r`:
-    - `reset = 1`, one shot flag
-    - forces are set to zero
-- `Q`:
-    - `quit = 1`
-    - the input process terminates
+**3. Signal Delivery Failure:**
+If the watchdog cannot deliver the ping signal (e.g., due to permission issues), it kills all monitored processes.
 
-### Environment: obstacles and targets
+**Recovery Strategy:**
+- **Fail-Fast**: On any failure, immediately kill all processes
+- **Clean Shutdown**: Use `SIGKILL` to ensure termination
+- **No Restart**: System requires manual restart (as per assignment requirements)
 
-Two processes control the environment.
+### PID Handshake Mechanism
 
-`obstacles`:
+A critical challenge is monitoring processes launched via `konsole`, which creates an intermediate shell:
 
-- manages up to `max_obstacles`
-- starts with `initial_obstacles`
-- every `obstacle_spawn_interval` seconds:
-    - activates a new obstacle or replaces the oldest one
-    - sends the whole `Obstacle[]` snapshot to `bb_server`
+**Problem:**
+When master spawns a process using konsole, the direct child is the konsole process, not the actual simulation process. The real process (like `bb_server`) is a grandchild, and master doesn't know its PID.
 
-`targets`:
+**Solution - PID Reporting:**
 
-- manages up to `max_targets`
-- starts with `initial_targets`
-- every `target_spawn_interval` seconds:
-    - activates or replaces a target at a random position
-    - sends the whole `Target[]` snapshot to `bb_server`
+The solution uses a dedicated pipe for each konsole-launched process to report its real PID back to master:
 
-`bb_server` receives these arrays via pipes, counts active entries and renders them on the map:
+1. Master creates PID report pipes (one for `bb_server`, one for `input`)
+2. Master passes the write-end file descriptor as the last command-line argument
+3. The real process (after konsole/shell layers) writes its PID to this pipe
+4. Master reads the real PID from the pipe's read-end
+5. Master sends these real PIDs (not konsole PIDs) to the watchdog
 
-- obstacles as `#`
-- targets as `+`
+This ensures the watchdog monitors the actual simulation processes, not the konsole wrapper processes.
 
-### Potential-field repulsion
-
-Repulsion is implemented in `bb_server.c` and controlled by the parameters:
-
-- `rho`: perception distance, radius of influence
-- `eta`: repulsion gain
-
-$$
-F_{\text{rep}}(d) =
-\begin{cases}
-\eta \left( \dfrac{1}{d} - \dfrac{1}{\rho_0} \right) \dfrac{1}{d^2} \lVert v \rVert, & 0 < d \le \rho_0 \\
-0\end{cases}
-$$
-
-where:
-
-- `d` is the distance from the drone to the wall or obstacle
-- `rho_0` is:
-    - `rho` for walls
-    - `rho_obs` for obstacles, defined as: ρ_obs = 1.5
-
-- `eta` is the repulsion gain
-- `v` is the velocity of the drone and `\lVert v \rVert` is its magnitude
-
-Repulsion contributions:
-
-- walls:
-    - active within distance `rho` of the borders
-    - direction:
-        - left wall pushes in positive x direction
-        - right wall pushes in negative x direction
-        - bottom wall pushes in positive y direction
-        - top wall pushes in negative y direction
-- obstacles:
-    - active within distance `rho_obs`
-    - direction from the obstacle center to the drone, that is away from the obstacle
-
-If `rho <= 0` or `eta <= 0`, repulsion is disabled and `bb_server` forwards the raw user commands to the drone.
-
-### Target scoring
-
-`bb_server` performs hit detection and scoring:
-
-- keeps the previous drone position `(prev_x, prev_y)` each time a new `DroneState` is received
-- for each active target:
-    - treats drone motion as a segment from `(prev_x, prev_y)` to `(x, y)`
-    - checks for segment and circle intersection with a small hit radius
-- when a hit is detected:
-    - plays the target sound
-    - increments `world.score`
-    - respawns that target at a new random location, still active
-
-If the drone moved very little, the squared length of the segment is below a small threshold and hit detection for that frame is skipped to avoid spurious hits.
-
-The score is displayed in the main UI header.
+**Process Categories:**
+- **Konsole-launched**: `bb_server`, `input` → need PID handshake
+- **Direct children**: `drone`, `obstacles`, `targets` → PID known immediately
 
 ---
 
-### Configuration file
+## Logging System
 
-The configuration file is located at `bin/conf/drone_parameters.conf` 
+### Log File Organization
 
-• each process independently calls:
+Assignment 2 introduces a dual-logging system with different strategies for different process types:
+
+**Watchdog Log (`bin/log/watchdog.log`):**
+- **Exclusive to watchdog process**
+- **Write mode**: Fresh log on each startup (previous content erased)
+- **No locking needed**: Single writer, no concurrency issues
+- **Purpose**: Monitor system health and record fault events
+
+**Shared Process Log (`bin/log/processes.log`):**
+- **Shared by all simulation processes**: `bb_server`, `drone`, `input`, `obstacles`, `targets`
+- **Append mode**: Preserves logs from concurrent processes
+- **File locking required**: Multiple writers need synchronization
+- **Purpose**: Consolidated view of simulation activity
+- **Cleanup**: Master deletes this file at startup for a fresh shared log
+
+**Directory Structure:**
 ```
-sim_params_load(NULL);
-const SimParams *params = sim_params_get();
+bin/log/
+├── .gitkeep            # Keeps directory in version control
+├── watchdog.log        # Watchdog-only log (fresh each run)
+└── processes.log       # Shared simulation log (fresh each run)
 ```
 
-• if the file cannot be opened, built in defaults from sim_const.h are used and a warning is logged
+### File Locking Mechanism
 
+The shared log uses `flock()` from `<sys/file.h>` to prevent write corruption when multiple processes write simultaneously.
 
+**Implementation Strategy:**
+
+Each process that writes to `processes.log`:
+1. Acquires an exclusive lock (`LOCK_EX`) before writing
+2. Writes its timestamp and message
+3. Flushes the buffer to ensure data reaches disk
+4. Releases the lock (`LOCK_UN`)
+
+This creates a critical section around each log write operation, ensuring that log entries are atomic and not interleaved.
+
+**Why `flock()` and not other mechanisms?**
+
+- **Advisory locking**: Cooperating processes respect locks
+- **Automatic release**: Kernel releases lock if process dies
+- **File descriptor scope**: Lock tied to FD, released on `fclose()`
+- **Blocking behavior**: Writer waits if another process holds lock
+
+**Alternative Approaches Considered:**
+1. `fcntl()` with `F_SETLKW`: More portable but more complex API
+2. Named semaphores: Would work but requires additional IPC resource
+3. Record locking: Overkill for appending to log file
+
+We chose `flock()` for its simplicity and automatic cleanup properties.
+
+### Logging API
+
+The logging system provides a simple API with three functions:
+
+**Initialization:**
+`sim_log_init(const char *process_name)` determines which log file to use based on the process name. If the name is "watchdog", it opens the dedicated watchdog log in write mode. Otherwise, it opens the shared processes log in append mode with locking enabled.
+
+**Logging:**
+`sim_log_info(const char *fmt, ...)` writes formatted messages with automatic timestamps in ISO format (YYYY-MM-DD HH:MM:SS). For the shared log, it acquires a lock before writing and releases it after flushing.
+
+**Cleanup:**
+`sim_log_close(void)` flushes buffers, closes the file descriptor, and automatically releases any `flock()` locks.
+
+**Log Entry Format:**
+```
+[2025-01-15 14:23:45] [INFO] --- drone started ---
+[2025-01-15 14:23:45] [INFO] drone: started (dt=0.050, M=1.000, K=1.000)
+```
+
+---
+
+## Integration with Existing System
+
+### Master Process Changes
+
+The master process has been significantly enhanced to support watchdog monitoring:
+
+**1. New Pipes Created:**
+- `pipe_watchdog`: Master to watchdog for sending PID list
+- `pidpipe_bb`: bb_server to master for real PID reporting
+- `pidpipe_in`: input to master for real PID reporting
+
+**2. Spawn Order Modified:**
+
+Assignment 1 order:
+```
+bb_server → input → drone → obstacles → targets
+```
+
+Assignment 2 order:
+```
+watchdog → bb_server → input → drone → obstacles → targets
+(blocks)   (PID rpt)  (PID rpt)
+```
+
+The watchdog is spawned first and blocks waiting for the PID list, ensuring it's ready before any monitored process starts.
+
+**3. Environment Variable Export:**
+Master sets the `SIM_WD_PID` environment variable containing the watchdog's PID. All child processes inherit this variable and can read it to know where to send acknowledgment signals.
+
+**4. PID Collection and Transmission:**
+After all processes are spawned and PID handshakes are complete, master collects the PIDs into an array and sends them to the watchdog via the pipe. This includes real PIDs from konsole-launched processes and direct child PIDs.
+
+**5. Cleanup Order:**
+When shutting down, master waits for all simulation processes first, then stops the watchdog last with `SIGINT`.
+
+### Client Process Integration
+
+Each monitored process integrates watchdog support through a simple client interface with minimal code:
+
+**1. Initialization:**
+At startup, each process calls `wd_client_init()` which reads the watchdog PID from the `SIM_WD_PID` environment variable and installs a signal handler for `SIGUSR1`.
+
+**2. Signal Handler:**
+The handler `wd_client_ping_handler()` is installed for `SIGUSR1`. When invoked, it simply sends `SIGUSR2` back to the watchdog PID.
+
+**3. Main Function Integration:**
+Each process's main function adds one line after initialization to enable watchdog support: `wd_client_init()`.
+
+**Key Properties:**
+- **Minimal code**: Only ~20 lines per process
+- **Non-intrusive**: Main loop unchanged
+- **Asynchronous**: Handler runs independently
+- **Fail-safe**: Missing watchdog PID is silently ignored
+
+---
+
+## Configuration
+
+Watchdog behavior can be tuned by modifying constants in `watchdog.c`:
+
+**Available Parameters:**
+- `WD_PING_SIGNAL`: Signal used for pings (default: `SIGUSR1`)
+- `WD_ACK_SIGNAL`: Signal expected for acks (default: `SIGUSR2`)
+- `WD_POLL_PERIOD_MS`: Time between health check rounds (default: 300ms)
+- `WD_ACK_TIMEOUT_MS`: Maximum wait for acknowledgment (default: 200ms)
+- `WD_MAX_PROCS`: Maximum processes to monitor (default: 16)
+
+**Tuning Recommendations:**
+
+- **Fast systems / low load**: Keep defaults (300ms poll, 200ms timeout)
+- **Slow systems / high load**: Increase timeout to 500-1000ms
+- **Stress testing**: Decrease poll period to 100ms
+- **Production use**: Increase poll period to 1000ms to reduce overhead
+
+The simulation parameters remain in `bin/conf/drone_parameters.conf` as in Assignment 1.
+
+---
 
 ## Project Architecture 
+
 ```
 ├── bin
 │   ├── conf
 │   │   ├── drone_parameters.conf
-│   │   ├── music.mp3
-│   │   ├── press.mp3
-│   │   ├── reset.mp3
-│   │   ├── scroll.mp3
-│   │   ├── select.mp3
-│   │   ├── stop.mp3
-│   │   └── target.mp3
+│   │   └── [audio files...]
 │   └── log
 │       ├── .gitkeep
-│       ├── bb_server.log
-│       ├── drone.log
-│       ├── input.log
-│       ├── obstacles.log
-│       └── targets.log
+│       ├── processes.log       ← NEW: Shared log with locking
+│       └── watchdog.log        ← NEW: Dedicated watchdog log
 ├── build
 ├── files
 │   └── assignmentsv4.1.pdf
@@ -422,17 +389,18 @@ const SimParams *params = sim_params_get();
 │   ├── sim_types.h
 │   └── sim_ui.h
 ├── src
-│   ├── bb_server.c
-│   ├── CMakeLists.txt
-│   ├── drone.c
-│   ├── input.c
-│   ├── master.c
-│   ├── obstacles.c
+│   ├── bb_server.c             ← UPDATED: PID handshake, watchdog client
+│   ├── CMakeLists.txt          ← UPDATED: Added watchdog target
+│   ├── drone.c                 ← UPDATED: Watchdog client integration
+│   ├── input.c                 ← UPDATED: PID handshake, watchdog client
+│   ├── master.c                ← UPDATED: Watchdog spawn, PID collection
+│   ├── obstacles.c             ← UPDATED: Watchdog client integration
 │   ├── sim_ipc.c
-│   ├── sim_log.c
+│   ├── sim_log.c               ← UPDATED: File locking support
 │   ├── sim_params.c
 │   ├── sim_ui.c
-│   └── targets.c
+│   ├── targets.c               ← UPDATED: Watchdog client integration
+│   └── watchdog.c              ← NEW: Watchdog implementation
 ├── .gitignore
 ├── .gitkeep
 ├── CMakeLists.txt
@@ -441,96 +409,19 @@ const SimParams *params = sim_params_get();
 └── run.sh
 ```
 
-## Git history and evolution
+**Key File Changes from Assignment 1:**
 
-The project was developed in several phases. Each phase corresponds to a specific commit that you can easily check out.
+| File | Status | Changes |
+|------|--------|---------|
+| `watchdog.c` | **NEW** | Complete watchdog implementation |
+| `sim_log.c` | **UPDATED** | Added `flock()` based locking |
+| `master.c` | **UPDATED** | Watchdog spawn, PID handshake |
+| `bb_server.c` | **UPDATED** | PID reporting, watchdog client |
+| `input.c` | **UPDATED** | PID reporting, watchdog client |
+| `drone.c` | **UPDATED** | Watchdog client integration |
+| `obstacles.c` | **UPDATED** | Watchdog client integration |
+| `targets.c` | **UPDATED** | Watchdog client integration |
+| `processes.log` | **NEW** | Shared log file |
+| `watchdog.log` | **NEW** | Watchdog-specific log file |
 
-### Phase 1
-
-Goal: set up everything with a good architecture from the start, reusing the file layout already planned for assignment 1.  
-This phase has:
-
-- shared memory for communication
-- `ncurses` used by both `input` and `bb_server`
-- resizable window and main menu
-- drone that moves according to physics and user commands
-- basic full project to validate the logic
-
-Checkout command:
-
-```bash
-git checkout f6fa42f60ef90be39ab9ee3a31cc151a09b91e63
-```
-
-### Phase Migration
-
-Goal: move the working design from shared memory to named pipes while keeping the same logical complexity.
-
-This phase:
-
-- replaces shared memory with named pipes
-- wires `bb_server`, `input` and `drone` through FIFOs with `select()`
-- switches to `konsole` for separate windows
-
-Checkout command:
-
-```bash
-git checkout 77648a1cb12b59886fa7446f9a6f5bcb470e78c7
-
-```
-
-### Phase Migration - 2
-
-Goal: move from named pipes to unnamed pipes, which is the final IPC target of the assignment.
-
-This phase:
-
-- uses anonymous pipes created by `master`
-- passes file descriptors through `argv`
-- keeps environment simple
-    - wall repulsion is just setting velocity to zero when the drone is close to a wall
-    - obstacles and targets are static placeholders without complete logic
-
-Checkout command:
-
-```bash
-git checkout 15c35e26786ff43c76be9e300648c4172bf85b80
-
-```
-
-### Phase 3
-
-Goal: implement the complete final behavior on top of the unnamed pipe architecture.
-
-This phase adds:
-
-- configuration file logic and safety net
-- log files for each process
-- proper dynamic generation of obstacles and targets
-- force based repulsion for walls and obstacles
-- full score logic
-- UI fixes and legend updates
-
-Checkout command:
-
-```bash
-git checkout d12c06c23dd9416333bee40239a1b2dd83d99fdb
-
-```
-
-### Phase Extra
-
-Phase Extra is the polishing phase. Here you are already on the most up to date version of the project.
-
-This includes:
-
-- bug fixes
-- music and sound effects
-- workflow updates
-- final README and documentation
-
-Checkout command:
-
-```bash
-git checkout nowhere :) If you are reading this it means you are at the most updated version of our project.
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
