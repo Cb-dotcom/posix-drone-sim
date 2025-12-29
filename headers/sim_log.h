@@ -10,9 +10,11 @@
 
 #ifndef SIM_LOG_H
 #define SIM_LOG_H
+#include <sys/types.h>
 
 void sim_log_init(const char *process_name);
 void sim_log_info(const char *fmt, ...);
 void sim_log_close(void);
+void sim_process_register(const char *process_name, pid_t pid);
 
 #endif

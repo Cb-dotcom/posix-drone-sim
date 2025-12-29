@@ -186,6 +186,8 @@ static void resolve_obstacle_collisions(DroneState *d, const Obstacle *obs, int 
 int main(int argc, char *argv[])
 {
     sim_log_init("drone");
+    sim_process_register("drone", getpid());
+    
     signal(SIGINT, handle_sigint);
     wd_client_init();
 

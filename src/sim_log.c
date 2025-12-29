@@ -132,3 +132,32 @@ void sim_log_close(void)
     log_fp = NULL;
     log_owns_fp = 0;
 }
+
+
+void sim_process_register(const char *process_name, pid_t pid)
+{
+    const char *path = "../../bin/log/processes.pid";
+    
+    // Open in append mode
+    FILE *fp = fopen(path, "a");
+    if (!fp) {
+        fprintf(stderr, "sim_process_register: could not open %s\n", path);
+        return;
+    }
+    
+    // Lock for atomic write
+    flock(fileno(fp), LOCK_EX);
+    
+    char ts[32];
+    log_get_timestamp(ts, sizeof(ts));
+    
+    fprintf(fp, "[%s] %s PID=%d\n", 
+            (ts[0] ? ts : "??????????"), 
+            process_name, 
+            (int)pid);
+    
+    fflush(fp);
+    
+    flock(fileno(fp), LOCK_UN);
+    fclose(fp);
+}

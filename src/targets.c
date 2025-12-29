@@ -80,6 +80,8 @@ static void generate_random_target(Target *t, const SimParams *params, double ra
 int main(int argc, char *argv[])
 {
     sim_log_init("targets");
+    sim_process_register("targets", getpid());
+
     signal(SIGINT, handle_sigint);
     wd_client_init();
 

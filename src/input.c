@@ -169,6 +169,8 @@ static void draw_ui(const CommandState *cmd)
 int main(int argc, char *argv[])
 {
     sim_log_init("input");
+    sim_process_register("input", getpid());
+    
     signal(SIGINT, handle_sigint);
     report_pid_if_requested(argc, argv);
     wd_client_init();

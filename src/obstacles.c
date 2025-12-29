@@ -67,6 +67,8 @@ static void generate_random_obstacle(Obstacle *o, const SimParams *params, doubl
 int main(int argc, char *argv[])
 {
     sim_log_init("obstacles");
+    sim_process_register("obstacles", getpid());
+
     signal(SIGINT, handle_sigint);
     wd_client_init();
 

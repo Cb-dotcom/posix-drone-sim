@@ -103,6 +103,7 @@ static int pid_is_alive(pid_t pid)
 int main(int argc, char *argv[])
 {
     sim_log_init("watchdog");
+    sim_process_register("watchdog", getpid());
 
     if (argc < 2) {
         sim_log_info("watchdog: usage: %s <read_fd>", argv[0]);

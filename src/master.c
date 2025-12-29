@@ -45,8 +45,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    unlink("log/processes.log"); // Updated to be relative to the bin directory
+    unlink("../../bin/log/processes.log"); // Updated to be relative to the bin directory
+    unlink("../../bin/log/processes.pid"); 
+
     sim_log_init("master");
+    sim_process_register("master", getpid());
     
     // Load runtime parameters from config file (or fall back to defaults)
     if (sim_params_load(NULL) != 0) {

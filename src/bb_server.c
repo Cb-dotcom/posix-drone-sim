@@ -313,6 +313,8 @@ static void handle_targets(WorldState *world,
 int main(int argc, char *argv[])
 {
     sim_log_init("bb_server");
+    sim_process_register("bb_server", getpid());
+
     signal(SIGINT, handle_sigint);
     report_pid_if_requested(argc, argv);
     wd_client_init();
