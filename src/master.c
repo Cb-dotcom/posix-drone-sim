@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
+#include <libgen.h> 
 
 #include "sim_ipc.h"
 #include "sim_params.h"
@@ -31,9 +32,20 @@ static int read_pid_from_pipe(int rfd, pid_t *out_pid, const char *who)
     return 0;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-    unlink("../../bin/log/processes.log"); // Ensure fresh shared log on startup
+    // Dynamic Path Resolution: Ensures relative paths work from any launch directory
+    char self_path[1024];
+    ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+    if (len != -1) {
+        self_path[len] = '\0';
+        char *dir = dirname(self_path);
+        if (chdir(dir) != 0) {
+            perror("master: chdir to executable directory failed");
+        }
+    }
+
+    unlink("log/processes.log"); // Updated to be relative to the bin directory
     sim_log_init("master");
     
     // Load runtime parameters from config file (or fall back to defaults)
@@ -363,8 +375,6 @@ int main(void)
     safe_close(pipe_obstacles[0]);   safe_close(pipe_obstacles[1]);
     safe_close(pipe_targets[0]);     safe_close(pipe_targets[1]);
     safe_close(pipe_obstacles_drone[0]); safe_close(pipe_obstacles_drone[1]);
-
-    // pidpipes already handled; watchdog pipe closed after write
 
     // ----------------------------
     // Wait for direct children
