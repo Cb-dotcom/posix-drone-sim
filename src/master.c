@@ -1,3 +1,21 @@
+// Problem: When spawning processes via konsole, the direct child is the
+//          konsole process itself, not our actual simulation process.
+//          The real process (bb_server/input) is a grandchild with an
+//          unknown PID.
+//
+// Solution: Each konsole-launched process writes its real PID back to
+//           master via a dedicated pipe.
+//
+// Flow:
+//   1. Master creates a pipe (pidpipe_bb for bb_server, pidpipe_in for input)
+//   2. Master forks and execs konsole, passing pipe write-end as last arg
+//   3. Konsole spawns shell, shell spawns actual process
+//   4. Actual process writes getpid() to pipe in report_pid_if_requested()
+//   5. Master reads real PID from pipe read-end
+//   6. Master sends REAL PIDs (not konsole PIDs) to watchdog
+//
+// This ensures watchdog monitors the actual simulation processes.
+
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -45,7 +63,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    unlink("../../bin/log/processes.log"); // Updated to be relative to the bin directory
+    // we unlink them so the past executions are not saved
+    unlink("../../bin/log/processes.log"); 
     unlink("../../bin/log/processes.pid"); 
 
     sim_log_init("master");
@@ -66,9 +85,9 @@ int main(int argc, char *argv[])
     int pipe_obstacles_drone[2];    // obstacles -> drone (Obstacle[])
     int pipe_watchdog[2];           // master -> watchdog (pid list)
 
-    // PID-report pipes (child writes pid to parent)
-    int pidpipe_bb[2];
-    int pidpipe_in[2];
+    // Create PID report pipes for konsole-launched processes
+    int pidpipe_bb[2]; // bb_server -> master PID reporting
+    int pidpipe_in[2]; // input -> master PID reporting
 
     if (pipe(pipe_drone_cmd) == -1) { perror("master: pipe_drone_cmd"); return EXIT_FAILURE; }
     if (pipe(pipe_drone_state) == -1) { perror("master: pipe_drone_state"); return EXIT_FAILURE; }
@@ -81,9 +100,8 @@ int main(int argc, char *argv[])
     if (pipe(pidpipe_bb) == -1) { perror("master: pidpipe_bb"); return EXIT_FAILURE; }
     if (pipe(pidpipe_in) == -1) { perror("master: pidpipe_in"); return EXIT_FAILURE; }
 
-    // ----------------------------
+    
     // Start WATCHDOG first (blocks reading until master writes pid list)
-    // ----------------------------
     pid_t wd_pid = fork();
     if (wd_pid < 0) {
         perror("master: fork watchdog");
@@ -120,9 +138,7 @@ int main(int argc, char *argv[])
         setenv("SIM_WD_PID", wd_pid_str, 1);
     }
 
-    // ----------------------------
     // bb_server (konsole) + PID handshake
-    // ----------------------------
     pid_t bb_konsole_pid = fork();
     if (bb_konsole_pid < 0) {
         perror("master: fork bb_server");
@@ -195,9 +211,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // ----------------------------
+
     // input (konsole) + PID handshake
-    // ----------------------------
     pid_t input_konsole_pid = fork();
     if (input_konsole_pid < 0) {
         perror("master: fork input");
@@ -248,9 +263,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // ----------------------------
+
     // Drone (direct child, real pid)
-    // ----------------------------
     pid_t drone_pid = fork();
     if (drone_pid < 0) {
         perror("master: fork drone");
@@ -282,9 +296,7 @@ int main(int argc, char *argv[])
         _exit(EXIT_FAILURE);
     }
 
-    // ----------------------------
     // Obstacles (direct child)
-    // ----------------------------
     pid_t obstacles_pid = fork();
     if (obstacles_pid < 0) {
         perror("master: fork obstacles");
@@ -314,9 +326,7 @@ int main(int argc, char *argv[])
         _exit(EXIT_FAILURE);
     }
 
-    // ----------------------------
     // Targets (direct child)
-    // ----------------------------
     pid_t targets_pid = fork();
     if (targets_pid < 0) {
         perror("master: fork targets");
@@ -345,9 +355,8 @@ int main(int argc, char *argv[])
         _exit(EXIT_FAILURE);
     }
 
-    // ----------------------------
+
     // Send PID list to watchdog (REAL PIDs for konsole-launched procs)
-    // ----------------------------
     {
         pid_t pids[16];
         int n = 0;
@@ -369,9 +378,8 @@ int main(int argc, char *argv[])
         safe_close(pipe_watchdog[1]);
     }
 
-    // ----------------------------
+
     // Close unused pipes in master
-    // ----------------------------
     safe_close(pipe_drone_cmd[0]);   safe_close(pipe_drone_cmd[1]);
     safe_close(pipe_drone_state[0]); safe_close(pipe_drone_state[1]);
     safe_close(pipe_input_cmd[0]);   safe_close(pipe_input_cmd[1]);
@@ -379,11 +387,10 @@ int main(int argc, char *argv[])
     safe_close(pipe_targets[0]);     safe_close(pipe_targets[1]);
     safe_close(pipe_obstacles_drone[0]); safe_close(pipe_obstacles_drone[1]);
 
-    // ----------------------------
+
     // Wait for direct children
     // NOTE: bb_server/input real pids are NOT our children when using konsole.
     // We must wait for the konsole processes we forked.
-    // ----------------------------
     int status;
     (void)waitpid(drone_pid, &status, 0);
     (void)waitpid(obstacles_pid, &status, 0);

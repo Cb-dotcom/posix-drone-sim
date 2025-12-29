@@ -4,56 +4,52 @@
 <details>
   <summary>View Dropdown</summary>
   <ol>
-    <li><a href="#posix-drone-simulator---assignment-2">POSIX Drone Simulator – Assignment 2</a></li>
+    <li><a href="#posix-drone-simulator---assignment-2">POSIX Drone Simulator - Assignment 2</a></li>
     <li><a href="#beloved-contributors">Beloved Contributors</a></li>
-    <li><a href="#detailed-description">Detailed Description</a>
+    <li><a href="#assignment-2-overview">Assignment 2 Overview</a></li>
+    <li><a href="#new-components-in-assignment-2">New Components in Assignment 2</a></li>
+    <li><a href="#watchdog-system">Watchdog System</a>
       <ul>
-        <li><a href="#assignment-2-overview">Assignment 2 Overview</a></li>
-        <li><a href="#how-to-build-and-run">How to build and run</a>
-          <ul>
-            <li><a href="#prerequisites">Prerequisites</a></li>
-            <li><a href="#build">Build</a></li>
-          </ul>
-        </li>
-        <li><a href="#watchdog-implementation">Watchdog Implementation</a>
-          <ul>
-            <li><a href="#watchdog-architecture">Watchdog Architecture</a></li>
-            <li><a href="#watchdog-process">Watchdog Process</a></li>
-            <li><a href="#ping-ack-protocol">Ping-Ack Protocol</a></li>
-            <li><a href="#fault-detection-and-recovery">Fault Detection and Recovery</a></li>
-            <li><a href="#pid-handshake-mechanism">PID Handshake Mechanism</a></li>
-          </ul>
-        </li>
-        <li><a href="#logging-system">Logging System</a>
-          <ul>
-            <li><a href="#log-file-organization">Log File Organization</a></li>
-            <li><a href="#file-locking-mechanism">File Locking Mechanism</a></li>
-            <li><a href="#logging-api">Logging API</a></li>
-          </ul>
-        </li>
-        <li><a href="#integration-with-existing-system">Integration with Existing System</a>
-          <ul>
-            <li><a href="#master-process-changes">Master Process Changes</a></li>
-            <li><a href="#client-process-integration">Client Process Integration</a></li>
-          </ul>
-        </li>
-        <li><a href="#configuration">Configuration</a></li>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#ping-ack-protocol">Ping-Ack Protocol</a></li>
+        <li><a href="#failure-detection">Failure Detection</a></li>
+        <li><a href="#recovery-strategy">Recovery Strategy</a></li>
+        <li><a href="#pid-handshake-mechanism">PID Handshake Mechanism</a></li>
+        <li><a href="#watchdog-integration-in-processes">Watchdog Integration in Processes</a></li>
+        <li><a href="#configuration-parameters">Configuration Parameters</a></li>
       </ul>
     </li>
-    <li><a href="#project-architecture">Project Architecture</a></li>
+    <li><a href="#logging-system">Logging System</a>
+      <ul>
+        <li><a href="#overview-1">Overview</a></li>
+        <li><a href="#log-file-organization">Log File Organization</a></li>
+        <li><a href="#file-locking-mechanism">File Locking Mechanism</a></li>
+        <li><a href="#log-entry-format">Log Entry Format</a></li>
+        <li><a href="#logging-api">Logging API</a></li>
+        <li><a href="#log-inspection">Log Inspection</a></li>
+      </ul>
+    </li>
+    <li><a href="#process-registration-file">Process Registration File</a>
+      <ul>
+        <li><a href="#overview-2">Overview</a></li>
+        <li><a href="#format">Format</a></li>
+        <li><a href="#purpose">Purpose</a></li>
+        <li><a href="#locking-mechanism">Locking Mechanism</a></li>
+        <li><a href="#lifecycle">Lifecycle</a></li>
+      </ul>
+    </li>
+    <li><a href="#integration-with-assignment-1">Integration with Assignment 1</a></li>
+    <li><a href="#architecture-summary">Architecture Summary</a></li>
+    <li><a href="#updated-project-architecture">Updated Project Architecture</a></li>
+    <li><a href="#summary-of-assignment-2-additions">Summary of Assignment 2 Additions</a></li>
   </ol>
 </details>
 <br>
 
 # POSIX Drone Simulator - Assignment 2
 
-This repository contains the implementation for the **second ARP course assignment**, which extends the multi-process drone simulator from Assignment 1 with two key reliability features:
-
-1. **Watchdog Process**: A monitoring system that continuously checks the health of all simulation processes and takes corrective action when failures are detected.
-
-2. **Enhanced Logging System**: A file-based logging infrastructure with proper synchronization for concurrent writes, featuring separate logs for the watchdog and shared logs for simulation processes.
-
-The foundation of this project is the multi-process drone simulator built in Assignment 1, which uses **POSIX IPC** (anonymous pipes), **ncurses** for UI, and simulates a 2D drone with physics-based dynamics. Assignment 2 focuses specifically on adding fault tolerance and observability to this existing system.
+This repository contains the implementation for the **second ARP course assignment**, which extends the multi-process drone simulator from Assignment 1 with reliability and observability features.
 
 # Beloved Contributors
 
@@ -62,366 +58,539 @@ The foundation of this project is the multi-process drone simulator built in Ass
 </a>
 <br><br>
 
-# Detailed Description
-
-## Assignment 2 Overview
-
-Assignment 2 introduces reliability and monitoring capabilities to the drone simulator. The key additions are:
-
-**Watchdog System:**
-- A dedicated watchdog process that monitors all simulation processes
-- Periodic health checks using signal-based ping-ack protocol
-- Automatic fault detection and system shutdown on failures
-- Protection against hung or crashed processes
-
-**Logging Infrastructure:**
-- File-based logging with timestamps and process identification
-- Separate log files for watchdog and simulation processes
-- File locking (`flock`) to prevent concurrent write corruption
-- Persistent logs that survive across multiple simulation runs
-
-These features ensure the simulator can detect and respond to process failures while maintaining detailed logs for debugging and analysis.
-
-## How to build and run
-
-### Prerequisites
-
-- POSIX system (Linux recommended)
-- C toolchain (`gcc` or compatible)
-- **CMake** ≥ 3.x
-- **ncurses** development libraries
-- **Konsole** terminal emulator (or adjust to your terminal of choice)
-- **mpg123** (optional) for sound effects
-
-### Build
-
-From the project root:
-
-```bash
-./run.sh 
-```
-
-The build script will:
-1. Check and install `mpg123` if needed (for audio)
-2. Configure the project with CMake
-3. Build all executables including the new `watchdog`
-4. Launch the master process which starts the entire system
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## Watchdog Implementation
+## Assignment 2 Overview
 
-### Watchdog Architecture
+Assignment 2 extends the multi-process drone simulator from Assignment 1 with **reliability and observability features**. While the core simulation remains unchanged, the system now includes fault detection and comprehensive logging capabilities.
 
-The watchdog is implemented as a separate process that runs independently from the simulation logic. It communicates with the master process via an anonymous pipe and with monitored processes via POSIX signals.
+The two major additions are:
 
-**Key Design Decisions:**
+1. **Watchdog Process**: A dedicated monitoring system that continuously checks the health of all simulation processes and terminates the system when failures are detected.
 
-1. **Early Startup**: The watchdog is the first process spawned by master, before any simulation processes
-2. **Blocking Initialization**: The watchdog blocks on reading the PID list, ensuring it's ready before simulation starts
-3. **Signal-Based Communication**: Uses `SIGUSR1` for pings and `SIGUSR2` for acknowledgments
-4. **Centralized Fault Handling**: All fault detection logic is in the watchdog; monitored processes simply respond to pings
+2. **Enhanced Logging Infrastructure**: A file-based logging system with proper synchronization for concurrent writes, featuring separate logs for different process groups.
 
-### Watchdog Process
+These features ensure the simulator can detect and respond to process failures while maintaining detailed logs for debugging and analysis.
 
-The watchdog process implements health monitoring through a continuous cycle:
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**Initialization:**
-- Receives the number of processes to monitor from master via pipe
-- Receives the array of process IDs (PIDs) to monitor
-- Sets up signal handlers for receiving acknowledgments
+---
 
-**Main Loop:**
-1. For each monitored process:
-   - Check if process is alive using `kill(pid, 0)`
-   - Send `SIGUSR1` ping signal
-   - Wait up to `WD_ACK_TIMEOUT_MS` for `SIGUSR2` acknowledgment
-   - If no ack or process is dead → kill all and exit
-2. Sleep for `WD_POLL_PERIOD_MS` before next round
+## New Components in Assignment 2
 
-**Configuration Parameters:**
+### Active Components Update
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `WD_PING_SIGNAL` | `SIGUSR1` | Signal sent to processes for health check |
-| `WD_ACK_SIGNAL` | `SIGUSR2` | Signal expected back from processes |
-| `WD_POLL_PERIOD_MS` | 300 ms | Time between health check rounds |
-| `WD_ACK_TIMEOUT_MS` | 200 ms | Maximum wait time for acknowledgment |
-| `WD_MAX_PROCS` | 16 | Maximum number of processes to monitor |
+The system now includes **seven processes** (one more than Assignment 1):
 
-**Termination:**
-- On `SIGINT`: Clean exit
-- On fault detection: Sends `SIGKILL` to all monitored processes, then exits
+- `master.c` - orchestrator
+- `bb_server.c` - blackboard and UI
+- `drone.c` - physics simulation
+- `input.c` - user controls
+- `obstacles.c` - environment generator
+- `targets.c` - target generator
+- **`watchdog.c`** - **NEW:** health monitor
+
+All processes now integrate with the watchdog monitoring system and use the enhanced logging infrastructure.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Watchdog System
+
+### Overview
+
+The watchdog is a dedicated monitoring process that ensures all simulation processes remain responsive. It uses a **signal-based ping-acknowledgment protocol** to detect hung or crashed processes.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Architecture
+
+**Startup Order:**
+The watchdog is the **first process** spawned by master, before any simulation processes. This ensures the monitoring system is ready before monitored processes begin execution.
+
+**Initialization Flow:**
+1. Master creates a pipe for PID list communication
+2. Master spawns watchdog (watchdog blocks reading from pipe)
+3. Master spawns all simulation processes
+4. Master collects real PIDs (including handshake for konsole-launched processes)
+5. Master writes PID list to watchdog pipe
+6. Watchdog unblocks and begins monitoring
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Ping-Ack Protocol
 
-The health check protocol is based on POSIX signals:
+The watchdog uses POSIX signals for health checks:
 
-**Ping Phase (Watchdog → Process):**
-The watchdog sends `SIGUSR1` to each monitored process in sequence.
+**Ping Phase:**
+- Watchdog sends `SIGUSR1` to each monitored process sequentially
+- Each process has a signal handler installed for `SIGUSR1`
 
-**Ack Phase (Process → Watchdog):**
-Each process has a signal handler that immediately responds by sending `SIGUSR2` back to the watchdog.
+**Ack Phase:**
+- Process signal handler immediately responds with `SIGUSR2` back to watchdog
+- Watchdog waits up to `WD_ACK_TIMEOUT_MS` (default: 200ms) for response
+- Acknowledgment includes the current code area the process was executing
 
-**Protocol Properties:**
-- **Asynchronous**: Processes respond immediately via signal handler
-- **Lightweight**: Minimal overhead on simulation processes
-- **Timeout-Based**: Watchdog detects hung processes via timeout
-- **SA_RESTART**: Signal handlers use `SA_RESTART` to minimize system call interruption
+**Monitoring Cycle:**
+- Watchdog checks each process in round-robin fashion
+- Between full rounds, sleeps for `WD_POLL_PERIOD_MS` (default: 300ms)
+- Continues indefinitely until failure detected or `SIGINT` received
 
-### Fault Detection and Recovery
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Failure Detection
 
 The watchdog detects three types of failures:
 
 **1. Process Death:**
-Before sending a ping, the watchdog checks if the process is still alive. If not, the watchdog immediately kills all monitored processes.
+Before sending a ping, the watchdog verifies the process exists using `kill(pid, 0)`. If the process is dead, immediate shutdown is triggered.
 
 **2. No Acknowledgment (Hung Process):**
-After sending a ping, if a process doesn't respond within the timeout period, the watchdog considers it hung and kills all monitored processes.
+If a process doesn't respond with `SIGUSR2` within the timeout period, it's considered hung. This catches processes stuck in infinite loops or blocking system calls.
 
 **3. Signal Delivery Failure:**
-If the watchdog cannot deliver the ping signal (e.g., due to permission issues), it kills all monitored processes.
+If the watchdog cannot deliver the ping signal (permission denied, invalid PID, etc.), it triggers shutdown to prevent monitoring a compromised system.
 
-**Recovery Strategy:**
-- **Fail-Fast**: On any failure, immediately kill all processes
-- **Clean Shutdown**: Use `SIGKILL` to ensure termination
-- **No Restart**: System requires manual restart (as per assignment requirements)
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Recovery Strategy
+
+The watchdog follows a **fail-fast approach**:
+
+**On Any Failure:**
+- Immediately send `SIGKILL` to all monitored processes
+- `SIGKILL` cannot be caught or ignored, ensuring termination
+- Watchdog logs the failure reason and exits
+- Master process detects watchdog exit and performs cleanup
+
+**No Automatic Restart:**
+The system requires manual restart after failure. This design choice ensures that transient issues don't cause restart loops, and operators can investigate root causes.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### PID Handshake Mechanism
 
-A critical challenge is monitoring processes launched via `konsole`, which creates an intermediate shell:
+A critical challenge is monitoring processes launched via `konsole`, which creates an intermediate shell layer.
 
-**Problem:**
-When master spawns a process using konsole, the direct child is the konsole process, not the actual simulation process. The real process (like `bb_server`) is a grandchild, and master doesn't know its PID.
+**The Problem:**
+When master spawns a process using konsole:
+- The direct child is the konsole process itself
+- The actual simulation process is a grandchild with an unknown PID
+- Master only knows the konsole PID, not the real process PID
 
-**Solution - PID Reporting:**
+**The Solution:**
+A dedicated pipe-based PID reporting mechanism:
 
-The solution uses a dedicated pipe for each konsole-launched process to report its real PID back to master:
-
-1. Master creates PID report pipes (one for `bb_server`, one for `input`)
-2. Master passes the write-end file descriptor as the last command-line argument
-3. The real process (after konsole/shell layers) writes its PID to this pipe
-4. Master reads the real PID from the pipe's read-end
-5. Master sends these real PIDs (not konsole PIDs) to the watchdog
-
-This ensures the watchdog monitors the actual simulation processes, not the konsole wrapper processes.
+1. Master creates a PID report pipe for each konsole-launched process
+2. Master passes the pipe's write-end file descriptor as the **last command-line argument**
+3. After the real process starts (post-konsole, post-shell), it calls `report_pid_if_requested()`
+4. Real process writes its PID using `write_full()` and closes the pipe
+5. Master reads the real PID from the pipe's read-end (blocking until available)
+6. Master sends the real PIDs (not konsole PIDs) to watchdog
 
 **Process Categories:**
-- **Konsole-launched**: `bb_server`, `input` → need PID handshake
-- **Direct children**: `drone`, `obstacles`, `targets` → PID known immediately
+- **Konsole-launched**: `bb_server`, `input` → require PID handshake
+- **Direct children**: `drone`, `obstacles`, `targets` → PID known immediately after fork
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Watchdog Integration in Processes
+
+Each monitored process integrates with the watchdog through minimal code:
+
+**Environment Variable:**
+Master exports `SIM_WD_PID` containing the watchdog's PID. All child processes inherit this variable.
+
+**Signal Handler:**
+Each process installs a handler for `SIGUSR1` that:
+- Reads the watchdog PID from the environment variable
+- Sends `SIGUSR2` back to the watchdog using `sigqueue()`
+- Includes the current `g_current_code_area` value for debugging
+
+**Code Area Tracking:**
+Processes maintain a `g_current_code_area` variable that indicates which section of code is executing:
+- `CODE_AREA_INIT` - initialization phase
+- `CODE_AREA_MAIN_LOOP` - main processing loop
+- `CODE_AREA_READ_PIPE` - reading from pipes
+- `CODE_AREA_WRITE_PIPE` - writing to pipes
+- `CODE_AREA_PHYSICS_UPDATE` - computation phase
+- `CODE_AREA_SHUTDOWN` - cleanup phase
+
+This information is included in watchdog logs to help diagnose where processes hang.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Configuration Parameters
+
+Watchdog behavior can be tuned in `watchdog.c`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `WD_PING_SIGNAL` | `SIGUSR1` | Signal sent for health checks |
+| `WD_ACK_SIGNAL` | `SIGUSR2` | Signal expected for acknowledgments |
+| `WD_POLL_PERIOD_MS` | 300 ms | Time between monitoring rounds |
+| `WD_ACK_TIMEOUT_MS` | 200 ms | Maximum wait for acknowledgment |
+| `WD_MAX_PROCS` | 16 | Maximum processes to monitor |
+
+**Tuning Recommendations:**
+
+**Fast systems with low load:** Keep defaults (300ms poll, 200ms timeout)
+
+**Slow systems or high load:** Increase timeout to 500-1000ms to avoid false positives
+
+**Stress testing:** Decrease poll period to 100ms for aggressive monitoring
+
+**Production deployment:** Increase poll period to 1000ms to reduce CPU overhead
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
 ## Logging System
 
-### Log File Organization
+### Overview
 
-Assignment 2 introduces a dual-logging system with different strategies for different process types:
+Assignment 2 introduces a **dual-logging architecture** with different strategies for different process types. This ensures comprehensive observability while avoiding log corruption from concurrent writes.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Log File Organization
 
 **Watchdog Log (`bin/log/watchdog.log`):**
 - **Exclusive to watchdog process**
 - **Write mode**: Fresh log on each startup (previous content erased)
 - **No locking needed**: Single writer, no concurrency issues
-- **Purpose**: Monitor system health and record fault events
+- **Purpose**: Monitor system health, record ping-ack cycles, log fault events
 
 **Shared Process Log (`bin/log/processes.log`):**
 - **Shared by all simulation processes**: `bb_server`, `drone`, `input`, `obstacles`, `targets`
-- **Append mode**: Preserves logs from concurrent processes
+- **Append mode**: Preserves logs from all concurrent processes
 - **File locking required**: Multiple writers need synchronization
-- **Purpose**: Consolidated view of simulation activity
-- **Cleanup**: Master deletes this file at startup for a fresh shared log
+- **Purpose**: Consolidated view of all simulation activity
+- **Cleanup**: Master deletes this file at startup for a fresh simulation run
 
 **Directory Structure:**
 ```
 bin/log/
-├── .gitkeep            # Keeps directory in version control
-├── watchdog.log        # Watchdog-only log (fresh each run)
-└── processes.log       # Shared simulation log (fresh each run)
+├── .gitkeep              # Keeps directory in version control
+├── watchdog.log          # Watchdog-only log (fresh each run)
+├── processes.log         # Shared simulation log (fresh each run)
+└── processes.pid         # Process registration file (fresh each run)
 ```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### File Locking Mechanism
 
-The shared log uses `flock()` from `<sys/file.h>` to prevent write corruption when multiple processes write simultaneously.
+The shared log uses **advisory file locking** via `flock()` to prevent corruption when multiple processes write simultaneously.
 
-**Implementation Strategy:**
+**The Concurrency Problem:**
+Without locking, when multiple processes write to the same file:
+- Process A writes timestamp, gets preempted
+- Process B writes full log line
+- Process A resumes and writes its message
+- Result: Corrupted output with interleaved partial lines
 
-Each process that writes to `processes.log`:
-1. Acquires an exclusive lock (`LOCK_EX`) before writing
-2. Writes its timestamp and message
-3. Flushes the buffer to ensure data reaches disk
-4. Releases the lock (`LOCK_UN`)
+**The Solution - Advisory Locking:**
 
-This creates a critical section around each log write operation, ensuring that log entries are atomic and not interleaved.
+Each log write operation follows this protocol:
 
-**Why `flock()` and not other mechanisms?**
+1. **Acquire Lock**: Call `flock(fd, LOCK_EX)` for exclusive access
+2. **Write**: Output timestamp, level, and message
+3. **Flush**: Call `fflush()` to ensure data reaches disk
+4. **Release Lock**: Call `flock(fd, LOCK_UN)` to allow others to write
 
-- **Advisory locking**: Cooperating processes respect locks
-- **Automatic release**: Kernel releases lock if process dies
-- **File descriptor scope**: Lock tied to FD, released on `fclose()`
-- **Blocking behavior**: Writer waits if another process holds lock
+The kernel **automatically serializes** writes by blocking processes that try to acquire a held lock.
 
-**Alternative Approaches Considered:**
-1. `fcntl()` with `F_SETLKW`: More portable but more complex API
-2. Named semaphores: Would work but requires additional IPC resource
-3. Record locking: Overkill for appending to log file
+**Why flock() over alternatives:**
 
-We chose `flock()` for its simplicity and automatic cleanup properties.
+**Automatic cleanup:** Kernel releases lock if process crashes, preventing deadlock
 
-### Logging API
+**Per-file-descriptor scope:** Lock tied to FD, released on `fclose()` or process exit
 
-The logging system provides a simple API with three functions:
+**Blocking behavior:** Calling process sleeps (not spin-waits) until lock available
 
-**Initialization:**
-`sim_log_init(const char *process_name)` determines which log file to use based on the process name. If the name is "watchdog", it opens the dedicated watchdog log in write mode. Otherwise, it opens the shared processes log in append mode with locking enabled.
+**Simplicity:** Single function call, no complex API
 
-**Logging:**
-`sim_log_info(const char *fmt, ...)` writes formatted messages with automatic timestamps in ISO format (YYYY-MM-DD HH:MM:SS). For the shared log, it acquires a lock before writing and releases it after flushing.
+**Considered alternatives:**
+- `fcntl(F_SETLKW)` - More portable but more complex API
+- Named semaphores - Requires additional IPC resource management
+- Record locking - Overkill for append-only log files
 
-**Cleanup:**
-`sim_log_close(void)` flushes buffers, closes the file descriptor, and automatically releases any `flock()` locks.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**Log Entry Format:**
+### Log Entry Format
+
+All log entries follow a consistent timestamp format:
+
+```
+[YYYY-MM-DD HH:MM:SS] [INFO] process_name: message
+```
+
+**Example entries:**
 ```
 [2025-01-15 14:23:45] [INFO] --- drone started ---
 [2025-01-15 14:23:45] [INFO] drone: started (dt=0.050, M=1.000, K=1.000)
+[2025-01-15 14:23:46] [INFO] bb_server: TARGET HIT idx=3 score=+100.0 total=100.0
+[2025-01-15 14:23:50] [INFO] watchdog: pid 12345 ack (code_area=1)
 ```
+
+The timestamp uses 24-hour format with second precision, sufficient for debugging multi-process interactions.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Logging API
+
+Processes interact with the logging system through three functions:
+
+**`sim_log_init(const char *process_name)`**
+Initializes logging for the calling process. Determines which log file to use based on process name:
+- Watchdog → `watchdog.log` (write mode, exclusive)
+- All others → `processes.log` (append mode, with locking)
+
+**`sim_log_info(const char *fmt, ...)`**
+Writes formatted messages with automatic timestamps. For shared log, acquires lock before writing and releases after flushing. Supports printf-style format strings.
+
+**`sim_log_close(void)`**
+Flushes buffers, closes the file descriptor, and releases any locks. Called during process cleanup. Locks are also released automatically by kernel on process exit.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Log Inspection
+
+**During execution:**
+You can tail logs in real-time to observe system behavior:
+
+```bash
+tail -f bin/log/processes.log    # Watch simulation activity
+tail -f bin/log/watchdog.log      # Watch health checks
+```
+
+**After execution:**
+Logs persist across runs (watchdog log is overwritten, shared log is deleted by master at startup). You can search for specific events:
+
+```bash
+grep "TARGET HIT" bin/log/processes.log    # Find all target collections
+grep "did not ack" bin/log/watchdog.log    # Find hung process events
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## Integration with Existing System
+## Process Registration File
 
-### Master Process Changes
+### Overview
 
-The master process has been significantly enhanced to support watchdog monitoring:
+The **process registration file** (`bin/log/processes.pid`) maintains a record of all process names and PIDs at startup. This provides a snapshot of the system state for debugging.
 
-**1. New Pipes Created:**
-- `pipe_watchdog`: Master to watchdog for sending PID list
-- `pidpipe_bb`: bb_server to master for real PID reporting
-- `pidpipe_in`: input to master for real PID reporting
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**2. Spawn Order Modified:**
+### Format
 
-Assignment 1 order:
+Each line records one process in the format:
+
 ```
-bb_server → input → drone → obstacles → targets
+[YYYY-MM-DD HH:MM:SS] process_name PID=12345
 ```
 
-Assignment 2 order:
+**Example file:**
 ```
-watchdog → bb_server → input → drone → obstacles → targets
-(blocks)   (PID rpt)  (PID rpt)
+[2025-01-15 14:23:45] master PID=12340
+[2025-01-15 14:23:45] watchdog PID=12341
+[2025-01-15 14:23:45] bb_server PID=12342
+[2025-01-15 14:23:45] input PID=12343
+[2025-01-15 14:23:45] drone PID=12344
+[2025-01-15 14:23:45] obstacles PID=12345
+[2025-01-15 14:23:45] targets PID=12346
 ```
 
-The watchdog is spawned first and blocks waiting for the PID list, ensuring it's ready before any monitored process starts.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**3. Environment Variable Export:**
-Master sets the `SIM_WD_PID` environment variable containing the watchdog's PID. All child processes inherit this variable and can read it to know where to send acknowledgment signals.
+### Purpose
 
-**4. PID Collection and Transmission:**
-After all processes are spawned and PID handshakes are complete, master collects the PIDs into an array and sends them to the watchdog via the pipe. This includes real PIDs from konsole-launched processes and direct child PIDs.
+**Debugging aid:** Quickly identify which PID corresponds to which process when inspecting system state with `ps`, `top`, or `/proc` filesystem.
 
-**5. Cleanup Order:**
-When shutting down, master waits for all simulation processes first, then stops the watchdog last with `SIGINT`.
+**Watchdog verification:** Confirm the watchdog is monitoring the correct PIDs by comparing registration file against watchdog log entries.
 
-### Client Process Integration
+**Crash investigation:** If the system crashes, the PID file shows which processes were running, enabling correlation with system logs or core dumps.
 
-Each monitored process integrates watchdog support through a simple client interface with minimal code:
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**1. Initialization:**
-At startup, each process calls `wd_client_init()` which reads the watchdog PID from the `SIM_WD_PID` environment variable and installs a signal handler for `SIGUSR1`.
+### Locking Mechanism
 
-**2. Signal Handler:**
-The handler `wd_client_ping_handler()` is installed for `SIGUSR1`. When invoked, it simply sends `SIGUSR2` back to the watchdog PID.
+Like the shared log, the PID file uses `flock()` for atomic writes. Each process:
+1. Opens file in append mode
+2. Acquires exclusive lock
+3. Writes single line with timestamp, name, and PID
+4. Flushes buffer
+5. Releases lock and closes file
 
-**3. Main Function Integration:**
-Each process's main function adds one line after initialization to enable watchdog support: `wd_client_init()`.
+This prevents interleaved writes if multiple processes register simultaneously during startup.
 
-**Key Properties:**
-- **Minimal code**: Only ~20 lines per process
-- **Non-intrusive**: Main loop unchanged
-- **Asynchronous**: Handler runs independently
-- **Fail-safe**: Missing watchdog PID is silently ignored
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Lifecycle
+
+**Created by:** Each process registers itself by calling `sim_process_register()` early in initialization
+
+**Cleanup:** Master deletes the file at startup to ensure a fresh registration for each simulation run
+
+**Persistence:** File persists after simulation ends, allowing post-mortem analysis
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## Configuration
+## Integration with Assignment 1
 
-Watchdog behavior can be tuned by modifying constants in `watchdog.c`:
+### Unchanged Components
 
-**Available Parameters:**
-- `WD_PING_SIGNAL`: Signal used for pings (default: `SIGUSR1`)
-- `WD_ACK_SIGNAL`: Signal expected for acks (default: `SIGUSR2`)
-- `WD_POLL_PERIOD_MS`: Time between health check rounds (default: 300ms)
-- `WD_ACK_TIMEOUT_MS`: Maximum wait for acknowledgment (default: 200ms)
-- `WD_MAX_PROCS`: Maximum processes to monitor (default: 16)
+The following Assignment 1 features remain **exactly the same** in Assignment 2:
 
-**Tuning Recommendations:**
+- Core simulation logic (drone physics, repulsion forces, scoring)
+- IPC architecture (anonymous pipes between processes)
+- User interface (ncurses-based visualization and controls)
+- Configuration file system (`drone_parameters.conf`)
+- Environment generation (obstacles and targets)
 
-- **Fast systems / low load**: Keep defaults (300ms poll, 200ms timeout)
-- **Slow systems / high load**: Increase timeout to 500-1000ms
-- **Stress testing**: Decrease poll period to 100ms
-- **Production use**: Increase poll period to 1000ms to reduce overhead
+### Changed Components
 
-The simulation parameters remain in `bin/conf/drone_parameters.conf` as in Assignment 1.
+**Master Process:**
+- Now spawns watchdog first (before all other processes)
+- Implements PID handshake mechanism for konsole-launched processes
+- Collects and transmits PID list to watchdog
+- Exports `SIM_WD_PID` environment variable
+- Deletes shared log and PID file at startup
+
+**All Simulation Processes:**
+- Integrate watchdog client (signal handler for `SIGUSR1`)
+- Track current code area in `g_current_code_area` variable
+- Use enhanced logging with file locking
+- Register themselves in `processes.pid` at startup
+- For konsole-launched processes: report real PID via pipe
+
+**Logging:**
+- Switched from per-process log files to dual-log architecture
+- Added file locking for concurrent writes
+- Timestamps now in ISO-like format for consistency
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
-## Project Architecture 
+## Architecture Summary
+
+### Process Hierarchy
+
+```
+master (orchestrator)
+├── watchdog (health monitor)         ← spawned FIRST
+├── bb_server (konsole wrapper)       ← PID handshake
+│   └── bb_server (real process)      ← monitored by watchdog
+├── input (konsole wrapper)           ← PID handshake
+│   └── input (real process)          ← monitored by watchdog
+├── drone                             ← monitored by watchdog
+├── obstacles                         ← monitored by watchdog
+└── targets                           ← monitored by watchdog
+```
+
+### Communication Topology
+
+**Simulation Pipes (unchanged from Assignment 1):**
+- `pipe_drone_cmd`: bb_server → drone (CommandState)
+- `pipe_drone_state`: drone → bb_server (DroneState)
+- `pipe_input_cmd`: input → bb_server (CommandState)
+- `pipe_obstacles`: obstacles → bb_server (Obstacle[])
+- `pipe_targets`: targets → bb_server (Target[])
+- `pipe_obstacles_drone`: obstacles → drone (Obstacle[])
+
+**Watchdog Communication (new in Assignment 2):**
+- `pipe_watchdog`: master → watchdog (PID list, one-time)
+- `SIM_WD_PID` environment variable: master → all children
+- Signals: watchdog ↔ all processes (`SIGUSR1` ping, `SIGUSR2` ack)
+
+**PID Handshake (new in Assignment 2):**
+- `pidpipe_bb`: bb_server → master (real PID reporting)
+- `pidpipe_in`: input → master (real PID reporting)
+
+### File Outputs
+
+**Logs:**
+- `bin/log/watchdog.log` - watchdog monitoring events (exclusive, overwritten each run)
+- `bin/log/processes.log` - simulation process logs (shared with locking, deleted at startup)
+
+**Process Registry:**
+- `bin/log/processes.pid` - process name and PID mapping (deleted at startup)
+
+**Configuration (read-only):**
+- `bin/conf/drone_parameters.conf` - runtime parameters (unchanged from Assignment 1)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Updated Project Architecture
 
 ```
 ├── bin
 │   ├── conf
 │   │   ├── drone_parameters.conf
-│   │   └── [audio files...]
+│   │   └── [audio files: music.mp3, press.mp3, etc.]
 │   └── log
 │       ├── .gitkeep
-│       ├── processes.log       ← NEW: Shared log with locking
-│       └── watchdog.log        ← NEW: Dedicated watchdog log
+│       ├── processes.log          ← NEW: Shared log with locking
+│       ├── processes.pid          ← NEW: Process registration
+│       └── watchdog.log           ← NEW: Watchdog-specific log
 ├── build
 ├── files
-│   └── assignmentsv4.1.pdf
+│   └── assignmentsv4.7.pdf        ← Updated assignment specification
 ├── headers
 │   ├── CMakeLists.txt
 │   ├── sim_const.h
 │   ├── sim_ipc.h
-│   ├── sim_log.h
+│   ├── sim_log.h                  ← UPDATED: Added locking support
 │   ├── sim_params.h
-│   ├── sim_types.h
+│   ├── sim_types.h                ← UPDATED: Added code area enum
 │   └── sim_ui.h
 ├── src
-│   ├── bb_server.c             ← UPDATED: PID handshake, watchdog client
-│   ├── CMakeLists.txt          ← UPDATED: Added watchdog target
-│   ├── drone.c                 ← UPDATED: Watchdog client integration
-│   ├── input.c                 ← UPDATED: PID handshake, watchdog client
-│   ├── master.c                ← UPDATED: Watchdog spawn, PID collection
-│   ├── obstacles.c             ← UPDATED: Watchdog client integration
+│   ├── bb_server.c                ← UPDATED: Watchdog client + PID handshake
+│   ├── CMakeLists.txt             ← UPDATED: Added watchdog target
+│   ├── drone.c                    ← UPDATED: Watchdog client
+│   ├── input.c                    ← UPDATED: Watchdog client + PID handshake
+│   ├── master.c                   ← UPDATED: Watchdog spawn, PID management
+│   ├── obstacles.c                ← UPDATED: Watchdog client
 │   ├── sim_ipc.c
-│   ├── sim_log.c               ← UPDATED: File locking support
+│   ├── sim_log.c                  ← UPDATED: File locking implementation
 │   ├── sim_params.c
 │   ├── sim_ui.c
-│   ├── targets.c               ← UPDATED: Watchdog client integration
-│   └── watchdog.c              ← NEW: Watchdog implementation
+│   ├── targets.c                  ← UPDATED: Watchdog client
+│   └── watchdog.c                 ← NEW: Complete watchdog implementation
 ├── .gitignore
-├── .gitkeep
 ├── CMakeLists.txt
 ├── LICENSE
-├── README.md
+├── README.md                      ← UPDATED: Assignment 2 documentation
 └── run.sh
 ```
 
-**Key File Changes from Assignment 1:**
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-| File | Status | Changes |
-|------|--------|---------|
-| `watchdog.c` | **NEW** | Complete watchdog implementation |
-| `sim_log.c` | **UPDATED** | Added `flock()` based locking |
-| `master.c` | **UPDATED** | Watchdog spawn, PID handshake |
-| `bb_server.c` | **UPDATED** | PID reporting, watchdog client |
-| `input.c` | **UPDATED** | PID reporting, watchdog client |
-| `drone.c` | **UPDATED** | Watchdog client integration |
-| `obstacles.c` | **UPDATED** | Watchdog client integration |
-| `targets.c` | **UPDATED** | Watchdog client integration |
-| `processes.log` | **NEW** | Shared log file |
-| `watchdog.log` | **NEW** | Watchdog-specific log file |
+---
+
+## Summary of Assignment 2 Additions
+
+| Feature | Purpose | Implementation |
+|---------|---------|----------------|
+| **Watchdog Process** | Detect hung or crashed processes | Signal-based ping-ack protocol with configurable timeouts |
+| **PID Handshake** | Monitor konsole-launched processes | Dedicated pipes for real PID reporting to master |
+| **Dual Logging** | Separate watchdog from simulation logs | `watchdog.log` (exclusive) + `processes.log` (shared with locking) |
+| **File Locking** | Prevent log corruption | `flock()` for atomic writes to shared log |
+| **Process Registration** | Track system state at startup | `processes.pid` file with timestamps and PIDs |
+| **Code Area Tracking** | Debug process hangs | `g_current_code_area` variable reported in acks |
+
+These additions transform the Assignment 1 simulator into a **production-ready system** with fault detection, detailed observability, and crash recovery capabilities.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

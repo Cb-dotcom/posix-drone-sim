@@ -1,5 +1,27 @@
-#include "sim_log.h"
+// Problem: Multiple processes writing to shared log simultaneously causes
+//          interleaved/corrupted output.
+//
+// Solution: Advisory file locking using flock(2)
+//
+// Mechanism:
+//   - Each process acquires LOCK_EX (exclusive lock) before writing
+//   - Kernel serializes writes automatically (waiters block in flock call)
+//   - Lock released explicitly (LOCK_UN) or automatically on fclose/exit
+//
+// Properties:
+//   - Advisory: Cooperating processes must use flock correctly
+//   - Per-FD: Lock tied to file descriptor, not process
+//   - Blocking: flock(LOCK_EX) blocks if another process holds lock
+//   - Automatic cleanup: Kernel releases lock if process crashes
+//
+// Alternative approaches considered:
+//   1. fcntl(F_SETLKW): More portable but complex API
+//   2. Named semaphores: Requires additional IPC resource
+//   3. Record locking: Overkill for append-only log
+//
+// Chosen flock for simplicity and automatic crash recovery.
 
+#include "sim_log.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
@@ -48,7 +70,7 @@ void sim_log_init(const char *process_name)
     char path[256];
     const char *mode;
 
-    // --- Logic Split: Watchdog vs. Others ---
+    // Logic Split: Watchdog vs. Others 
     if (strcmp(process_name, "watchdog") == 0) {
         // Watchdog gets its own private log
         // "w" mode deletes previous content (Fresh Start)
@@ -102,7 +124,7 @@ void sim_log_info(const char *fmt, ...)
     char ts[32];
     log_get_timestamp(ts, sizeof(ts));
 
-    // --- CRITICAL SECTION START ---
+    // CRITICAL SECTION START 
     // If shared, lock the file descriptor to prevent interleaved writes
     if (is_shared_log) {
         flock(fileno(log_fp), LOCK_EX);
@@ -118,7 +140,7 @@ void sim_log_info(const char *fmt, ...)
     fputc('\n', log_fp);
     fflush(log_fp); // Ensure data hits disk before unlocking
 
-    // --- CRITICAL SECTION END ---
+    // CRITICAL SECTION END 
     if (is_shared_log) {
         flock(fileno(log_fp), LOCK_UN);
     }
