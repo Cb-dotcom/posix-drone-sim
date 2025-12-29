@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <math.h>
 #include <signal.h>
@@ -145,7 +146,7 @@ static void sleep_dt(double dt)
     while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {}
 }
 
-static void resolve_obstacle_collisions(DroneState *d, const Obstacle *obs, int obs_slots)
+static void resolve_obstacle_collisions(DroneState *d, const Obstacle *obs, int obs_slots, int *collision_flag)
 {
     const double DRONE_RADIUS = 0.5;
 
@@ -167,6 +168,8 @@ static void resolve_obstacle_collisions(DroneState *d, const Obstacle *obs, int 
 
         double dist = sqrt(dist2);
         if (dist < min_dist) {
+            *collision_flag = 1; 
+
             double nx = dx / dist;
             double ny = dy / dist;
 
@@ -272,7 +275,8 @@ int main(int argc, char *argv[])
         apply_world_bounds(&d, world_width, world_height);
 
         if (have_obstacles && obs_slots > 0) {
-            resolve_obstacle_collisions(&d, obstacles, obs_slots);
+            int collision_occurred = 0;
+            resolve_obstacle_collisions(&d, obstacles, obs_slots, &collision_occurred);
         }
 
         if (write_full(fd_state_out, &d, sizeof(d)) != (ssize_t)sizeof(d)) {

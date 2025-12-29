@@ -69,6 +69,14 @@ typedef struct {
     Target       targets[SIM_MAX_TARGETS];
 
     double       score;
+
+    struct timespec sim_start_time;     // Simulation start
+    struct timespec last_target_time;   // Last target collection
+    double total_distance;              // Cumulative distance traveled
+    int targets_collected;              // Number of targets hit
+    int obstacle_collisions;            // Penalty counter
+
+
 } WorldState;
 
 #endif

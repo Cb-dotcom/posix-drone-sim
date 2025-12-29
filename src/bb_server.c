@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -292,8 +293,47 @@ static void handle_targets(WorldState *world,
         int hit = segment_hits_circle(prev_x, prev_y, x1, y1, tgt->x, tgt->y, HIT_RADIUS);
         if (!hit) continue;
 
+        // === NEW SCORING FORMULA ===
+    
+        // 1. Base points for hitting target
+        double base_points = 100.0;
+        
+        // 2. Time bonus (faster = better)
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        
+        double time_since_last = (now.tv_sec - world->last_target_time.tv_sec) +
+                                (now.tv_nsec - world->last_target_time.tv_nsec) / 1e9;
+        
+        // Award bonus if collected quickly (< 5 seconds)
+        double time_bonus = 0.0;
+        if (time_since_last < 5.0) {
+            time_bonus = 50.0 * (5.0 - time_since_last) / 5.0;  // 0-50 points
+        }
+        
+        // 3. Efficiency penalty (distance traveled)
+        // Penalize if traveled far to reach target
+        double distance_to_target = sqrt((tgt->x - prev_x) * (tgt->x - prev_x) +
+                                        (tgt->y - prev_y) * (tgt->y - prev_y));
+        double distance_penalty = distance_to_target * 0.5;  // 0.5 points per unit
+        
+        // 4. Obstacle collision penalty
+        double collision_penalty = world->obstacle_collisions * 10.0;
+        
+        // 5. Calculate final score for this target
+        double target_score = base_points + time_bonus - distance_penalty - collision_penalty;
+        if (target_score < 0.0) target_score = 0.0;
+        
+        world->score += target_score;
+        world->targets_collected++;
+        world->last_target_time = now;
+        
+        sim_log_info("bb_server: TARGET HIT idx=%d score=+%.1f (time_bonus=%.1f dist_penalty=%.1f) total=%.1f",
+                    i, target_score, time_bonus, distance_penalty, world->score);
+
+
         play("../../bin/conf/target.mp3");
-        world->score += 1.0;
+        //world->score += 1.0;
 
         sim_log_info("bb_server: TARGET HIT idx=%d pos=(%.2f,%.2f) score=%.1f",
                      i, tgt->x, tgt->y, world->score);
@@ -420,6 +460,12 @@ int main(int argc, char *argv[])
 
     world.score = 0.0;
 
+    clock_gettime(CLOCK_REALTIME, &world.sim_start_time);
+    world.last_target_time = world.sim_start_time;
+    world.total_distance = 0.0;
+    world.targets_collected = 0;
+    world.obstacle_collisions = 0;
+
     double prev_x           = 0.0;
     double prev_y           = 0.0;
     int    have_prev_pos    = 0;
@@ -517,6 +563,14 @@ int main(int argc, char *argv[])
                     }
                     world.drone      = ds;
                     have_drone_state = 1;
+
+                    if (have_drone_state && have_prev_pos) {
+                        double dx = world.drone.x - prev_x;
+                        double dy = world.drone.y - prev_y;
+                        double dist = sqrt(dx * dx + dy * dy);
+                        world.total_distance += dist;
+                    }
+
                 } else if (r == 0) {
                     sim_log_info("bb_server: drone pipe EOF");
                     running = 0;
