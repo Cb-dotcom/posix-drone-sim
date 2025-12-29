@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -13,10 +14,6 @@
 #include "sim_const.h"
 #include "sim_log.h"
 #include "sim_params.h"   // runtime parameters (force_step, max_force)
-
-// Flag set by the SIGINT handler to request a clean shutdown
-static volatile sig_atomic_t running = 1;
-
 #include <unistd.h>
 #include <stdlib.h>
 #include "sim_ipc.h"
@@ -37,16 +34,20 @@ static void report_pid_if_requested(int argc, char **argv)
     close((int)fd);
 }
 
+// Flag set by the SIGINT handler to request a clean shutdown
+volatile sig_atomic_t g_current_code_area = 0;
 
-
+static volatile sig_atomic_t running = 1;
 static pid_t g_wd_pid = -1;
 
-static void wd_client_ping_handler(int sig)
+// [REQUIRED] Update handler signature to 3 arguments
+static void wd_client_ping_handler(int sig, siginfo_t *info, void *ctx)
 {
-    (void)sig;
+    (void)sig; (void)ctx;
     if (g_wd_pid > 1) {
-        // reply to watchdog
-        (void)kill(g_wd_pid, SIGUSR2);
+        union sigval sv;
+        sv.sival_int = (int)g_current_code_area;
+        sigqueue(g_wd_pid, SIGUSR2, sv);
     }
 }
 
@@ -60,9 +61,9 @@ static void wd_client_init(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = wd_client_ping_handler;
+    sa.sa_sigaction = wd_client_ping_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
 
     // Watchdog pings us with SIGUSR1
     (void)sigaction(SIGUSR1, &sa, NULL);
@@ -221,12 +222,18 @@ int main(int argc, char *argv[])
     fprintf(stderr, "input: started (ncurses)\n");
 
     while (running) {
+        g_current_code_area = CODE_AREA_MAIN_LOOP;
+
         draw_ui(&cmd);
+
+        g_current_code_area = CODE_AREA_READ_PIPE;
 
         int ch = getch();
         if (ch == ERR) {
             continue;
         }
+
+        g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
 
         cmd.last_key = ch;
         cmd.brake    = 0;
@@ -288,6 +295,8 @@ int main(int argc, char *argv[])
         cmd.fx = fx;
         cmd.fy = fy;
 
+        g_current_code_area = CODE_AREA_WRITE_PIPE;
+
         ssize_t w = write_full(fd_to_srv, &cmd, sizeof(cmd));
         if (w != (ssize_t)sizeof(cmd)) {
             endwin();
@@ -307,6 +316,7 @@ int main(int argc, char *argv[])
             break;
         }
     }
+    g_current_code_area = CODE_AREA_SHUTDOWN;
 
     sim_log_info("input: exiting\n");
     fprintf(stderr, "input: exiting\n");

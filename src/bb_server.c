@@ -20,15 +20,18 @@
 
 #define DRONE_RADIUS 0.5
 
-static volatile sig_atomic_t running = 1;
+volatile sig_atomic_t g_current_code_area = 0;
 
+static volatile sig_atomic_t running = 1;
 static pid_t g_wd_pid = -1;
 
-static void wd_client_ping_handler(int sig)
+static void wd_client_ping_handler(int sig, siginfo_t *info, void *ctx)
 {
-    (void)sig;
+    (void)sig; (void)ctx;
     if (g_wd_pid > 1) {
-        (void)kill(g_wd_pid, SIGUSR2);
+        union sigval sv;
+        sv.sival_int = (int)g_current_code_area;
+        sigqueue(g_wd_pid, SIGUSR2, sv);
     }
 }
 
@@ -42,9 +45,9 @@ static void wd_client_init(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = wd_client_ping_handler;
+    sa.sa_sigaction = wd_client_ping_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
 
     (void)sigaction(SIGUSR1, &sa, NULL);
 }
@@ -521,6 +524,8 @@ int main(int argc, char *argv[])
     world.targets_slots   = tgt_to_read;
 
     while (running) {
+        g_current_code_area = CODE_AREA_MAIN_LOOP;
+
         fd_set readfds;
         FD_ZERO(&readfds);
 
@@ -537,6 +542,8 @@ int main(int argc, char *argv[])
         struct timeval tv;
         tv.tv_sec  = 0;
         tv.tv_usec = 33333;
+
+        g_current_code_area = CODE_AREA_READ_PIPE;
 
         int ready = select(maxfd + 1, &readfds, NULL, NULL, &tv);
         if (ready < 0) {
@@ -651,6 +658,8 @@ int main(int argc, char *argv[])
             }
         }
 
+        g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
+
         if (have_prev_pos && have_drone_state && have_targets) {
             handle_targets(&world, params, prev_x, prev_y);
         }
@@ -666,6 +675,7 @@ int main(int argc, char *argv[])
 
             int rep_active = obs_rep_active;
 
+            g_current_code_area = CODE_AREA_WRITE_PIPE;
             if (input_received || rep_active || rep_active_prev) {
                 CommandState out_cmd = user_cmd;
 
@@ -701,6 +711,7 @@ int main(int argc, char *argv[])
             break;
         }
     }
+    g_current_code_area = CODE_AREA_SHUTDOWN;
 
     ui_shutdown();
 

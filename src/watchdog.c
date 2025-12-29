@@ -5,6 +5,7 @@
 // - watchdog periodically SIGUSR1-pings each pid, expects SIGUSR2 ack
 // - if a pid is dead OR doesn't ack within timeout => kill all and exit
 
+#define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -40,6 +41,7 @@
 
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_acked[WD_MAX_PROCS];
+static volatile sig_atomic_t g_acked_code_area[WD_MAX_PROCS];
 
 static pid_t  g_pids[WD_MAX_PROCS];
 static int    g_npids = 0;
@@ -68,6 +70,7 @@ static void ack_handler(int sig, siginfo_t *info, void *ctx)
     int idx = find_pid_index(sender);
     if (idx >= 0) {
         g_acked[idx] = 1;
+        g_acked_code_area[idx] = info->si_value.sival_int;
     }
 }
 
@@ -195,6 +198,11 @@ int main(int argc, char *argv[])
                 kill_all_monitored();
                 sim_log_close();
                 return EXIT_SUCCESS;
+            }
+
+            if (g_acked[i]) {
+                sim_log_info("watchdog: pid %d ack (code_area=%d)", 
+                             (int)pid, (int)g_acked_code_area[i]);
             }
 
             // small spacing between checks

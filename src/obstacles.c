@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,15 +12,18 @@
 #include "sim_params.h"
 #include "sim_types.h"
 
-static volatile sig_atomic_t running = 1;
+volatile sig_atomic_t g_current_code_area = 0;
 
+static volatile sig_atomic_t running = 1;
 static pid_t g_wd_pid = -1;
 
-static void wd_client_ping_handler(int sig)
+static void wd_client_ping_handler(int sig, siginfo_t *info, void *ctx)
 {
-    (void)sig;
+    (void)sig; (void)ctx;
     if (g_wd_pid > 1) {
-        (void)kill(g_wd_pid, SIGUSR2);
+        union sigval sv;
+        sv.sival_int = (int)g_current_code_area;
+        sigqueue(g_wd_pid, SIGUSR2, sv);
     }
 }
 
@@ -33,9 +37,9 @@ static void wd_client_init(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = wd_client_ping_handler;
+    sa.sa_sigaction = wd_client_ping_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
 
     (void)sigaction(SIGUSR1, &sa, NULL);
 }
@@ -147,8 +151,13 @@ int main(int argc, char *argv[])
     int oldest_index = 0;
 
     while (running) {
+        g_current_code_area = CODE_AREA_MAIN_LOOP;
+
+        g_current_code_area = CODE_AREA_READ_PIPE;
         nanosleep(&sleep_ts, NULL);
         if (!running) break;
+
+        g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
 
         int idx;
         if (active_count < max_obstacles) {
@@ -160,6 +169,8 @@ int main(int argc, char *argv[])
 
         generate_random_obstacle(&obstacles[idx], params, radius);
 
+        g_current_code_area = CODE_AREA_WRITE_PIPE;
+
         w1 = write_full(fd_obs_out_bb, obstacles, (size_t)expected);
         w2 = write_full(fd_obs_out_drone, obstacles, (size_t)expected);
         if (w1 != expected || w2 != expected) {
@@ -168,6 +179,7 @@ int main(int argc, char *argv[])
             break;
         }
     }
+    g_current_code_area = CODE_AREA_SHUTDOWN;
 
     close(fd_obs_out_bb);
     close(fd_obs_out_drone);

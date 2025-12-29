@@ -16,15 +16,20 @@
 #include "sim_params.h"
 #include "sim_types.h"
 
+volatile sig_atomic_t g_current_code_area = 0;
+
 static volatile sig_atomic_t running = 1;
 
 static pid_t g_wd_pid = -1;
 
-static void wd_client_ping_handler(int sig)
+static void wd_client_ping_handler(int sig,  siginfo_t *info, void *ctx)
 {
-    (void)sig;
+    (void)sig; (void)ctx;
     if (g_wd_pid > 1) {
-        (void)kill(g_wd_pid, SIGUSR2);
+        // Send both ACK and code area as signal value
+        union sigval sv;
+        sv.sival_int = (int)g_current_code_area;
+        sigqueue(g_wd_pid, SIGUSR2, sv);
     }
 }
 
@@ -38,9 +43,9 @@ static void wd_client_init(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = wd_client_ping_handler;
+    sa.sa_sigaction = wd_client_ping_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
 
     (void)sigaction(SIGUSR1, &sa, NULL);
 }
@@ -188,6 +193,8 @@ static void resolve_obstacle_collisions(DroneState *d, const Obstacle *obs, int 
 
 int main(int argc, char *argv[])
 {
+    g_current_code_area = CODE_AREA_INIT;
+
     sim_log_init("drone");
     sim_process_register("drone", getpid());
     
@@ -241,6 +248,9 @@ int main(int argc, char *argv[])
     d.y  = world_height / 2.0;
 
     while (running) {
+        g_current_code_area = CODE_AREA_MAIN_LOOP;
+
+        g_current_code_area = CODE_AREA_READ_PIPE;
         if (drain_latest_command(fd_cmd_in, &c) < 0) break;
 
         if (c.quit) break;
@@ -261,6 +271,8 @@ int main(int argc, char *argv[])
             }
         }
 
+        g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
+
         double ax = (c.fx - damping * d.vx) / mass;
         double ay = (c.fy - damping * d.vy) / mass;
 
@@ -279,6 +291,8 @@ int main(int argc, char *argv[])
             resolve_obstacle_collisions(&d, obstacles, obs_slots, &collision_occurred);
         }
 
+        g_current_code_area = CODE_AREA_WRITE_PIPE;
+
         if (write_full(fd_state_out, &d, sizeof(d)) != (ssize_t)sizeof(d)) {
             perror("drone: write_full(fd_state_out)");
             break;
@@ -286,6 +300,7 @@ int main(int argc, char *argv[])
 
         sleep_dt(dt);
     }
+    g_current_code_area = CODE_AREA_SHUTDOWN;
 
     close(fd_cmd_in);
     close(fd_state_out);

@@ -14,6 +14,7 @@
 #define SIM_TYPES_H
 
 #include <time.h> 
+#include <signal.h>
 
 // Maximum sizes for obstacle/target arrays in WorldState.
 #define SIM_MAX_OBSTACLES 64
@@ -35,7 +36,17 @@ typedef struct {
     int    last_key;
 } CommandState;
 
+typedef enum {
+    CODE_AREA_INIT = 0,
+    CODE_AREA_MAIN_LOOP,
+    CODE_AREA_READ_PIPE,
+    CODE_AREA_WRITE_PIPE,
+    CODE_AREA_PHYSICS_UPDATE,
+    CODE_AREA_UI_RENDER,
+    CODE_AREA_SHUTDOWN
+} CodeArea;
 
+extern volatile sig_atomic_t g_current_code_area;
 
 typedef struct {
     double x;       

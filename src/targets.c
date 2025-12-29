@@ -2,7 +2,7 @@
 // Generates targets over time and sends them periodically to bb_server
 // via an anonymous pipe. bb_server stores them in WorldState and uses them
 // for drawing / scoring / scoring.
-
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,21 +16,21 @@
 #include "sim_log.h"
 #include "sim_const.h"
 
+volatile sig_atomic_t g_current_code_area = 0;
+
 // Flag set by the SIGINT handler to request a clean shutdown
 static volatile sig_atomic_t running = 1;
-
-
 static pid_t g_wd_pid = -1;
 
-static void wd_client_ping_handler(int sig)
+static void wd_client_ping_handler(int sig, siginfo_t *info, void *ctx)
 {
-    (void)sig;
+    (void)sig; (void)ctx;
     if (g_wd_pid > 1) {
-        // reply to watchdog
-        (void)kill(g_wd_pid, SIGUSR2);
+        union sigval sv;
+        sv.sival_int = (int)g_current_code_area;
+        sigqueue(g_wd_pid, SIGUSR2, sv);
     }
 }
-
 static void wd_client_init(void)
 {
     const char *s = getenv("SIM_WD_PID");
@@ -41,9 +41,9 @@ static void wd_client_init(void)
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = wd_client_ping_handler;
+    sa.sa_sigaction = wd_client_ping_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
 
     // Watchdog pings us with SIGUSR1
     (void)sigaction(SIGUSR1, &sa, NULL);
@@ -181,8 +181,13 @@ int main(int argc, char *argv[])
     int oldest_index = 0;
 
     while (running) {
+        g_current_code_area = CODE_AREA_MAIN_LOOP;
+        
+        g_current_code_area = CODE_AREA_READ_PIPE;
         nanosleep(&sleep_ts, NULL);
         if (!running) break;
+
+        g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
 
         int idx;
         if (active_count < max_targets) {
@@ -195,6 +200,8 @@ int main(int argc, char *argv[])
 
         generate_random_target(&targets[idx], params, radius, next_id++);
 
+        g_current_code_area = CODE_AREA_WRITE_PIPE;
+
         w = write_full(fd_tgt_out, targets,
                        (size_t)(max_targets * (int)sizeof(Target)));
         if (w != expected) {
@@ -206,6 +213,7 @@ int main(int argc, char *argv[])
         sim_log_info("targets: updated target at idx=%d (active=%d/%d, id=%d)",
                      idx, active_count, max_targets, targets[idx].id);
     }
+    g_current_code_area = CODE_AREA_SHUTDOWN;
 
     close(fd_tgt_out);
     sim_log_info("targets: exiting (signal or pipe error)");
