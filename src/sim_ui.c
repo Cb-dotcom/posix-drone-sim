@@ -83,6 +83,7 @@ static void ui_setup_colors(void)
     init_pair(1, COLOR_BLACK, COLOR_CYAN);   // menu highlight
     init_pair(2, COLOR_YELLOW, -1);          // normal menu text / obstacles
     init_pair(3, COLOR_MAGENTA, -1);         // title / targets
+    init_pair(4, COLOR_CYAN, -1);            // server drone in client mode
 }
 
 // Render the full-screen main menu and return selected option index
@@ -284,9 +285,15 @@ void ui_draw(const WorldState *world)
              "obstacles=%d targets=%d score=%6.2f",
              world->num_obstacles, world->num_targets, world->score);
 
-    mvprintw(3, 0,
-             "Legend: '@'=drone  '#'=obstacle  '+'=target   |   Press 'Q' in INPUT window to quit");
-
+             
+    if (world->mode == SIM_MODE_CLIENT) {
+        mvprintw(3, 0,
+                 "Legend: '@'=your_drone  '*'=server_drone  '#'=obstacle  '+'=target   |   Press 'Q' in INPUT to quit");
+    } else {
+        mvprintw(3, 0,
+                 "Legend: '@'=drone  '#'=obstacle  '+'=target   |   Press 'Q' in INPUT window to quit");
+    }
+             
     // row 4 is left empty as a visual spacer; map border starts at row 5
 
     // Draw obstacles as '#'
@@ -339,6 +346,32 @@ void ui_draw(const WorldState *world)
 
     // Draw drone symbol at mapped position inside the map window
     mvwaddch(map_win, py, px, '@');
+
+    // If in client mode, also draw server's drone with different symbol
+    if (world->mode == SIM_MODE_CLIENT && world->has_server_drone) {
+        double sx = world->server_drone_x;
+        double sy = world->server_drone_y;
+
+        // Clamp server drone to world bounds
+        if (sx < 0.0) sx = 0.0;
+        if (sx > ww)  sx = ww;
+        if (sy < 0.0) sy = 0.0;
+        if (sy > wh)  sy = wh;
+
+        // Map server drone to screen coordinates
+        int spx = 1 + (int)((sx / ww) * (W - 2));
+        int spy = 1 + (int)((sy / wh) * (H - 2));
+
+        if (spx < 1) spx = 1;
+        if (spx > W - 2) spx = W - 2;
+        if (spy < 1) spy = 1;
+        if (spy > H - 2) spy = H - 2;
+
+        // Draw server drone with different color and symbol
+        wattron(map_win, COLOR_PAIR(4) | A_BOLD);
+        mvwaddch(map_win, spy, spx, '*');  // '*' for server drone
+        wattroff(map_win, COLOR_PAIR(4) | A_BOLD);
+    }
 
     refresh();
     wrefresh(map_win);

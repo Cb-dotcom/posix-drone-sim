@@ -16,6 +16,13 @@
 #include <time.h> 
 #include <signal.h>
 
+typedef enum {
+    SIM_MODE_NORMAL = 0,
+    SIM_MODE_SERVER = 1,
+    SIM_MODE_CLIENT = 2
+} SimMode;
+
+
 // Maximum sizes for obstacle/target arrays in WorldState.
 #define SIM_MAX_OBSTACLES 64
 #define SIM_MAX_TARGETS   32
@@ -87,6 +94,11 @@ typedef struct {
     int targets_collected;              // Number of targets hit
     int obstacle_collisions;            // Penalty counter
 
+    // Network mode data
+    SimMode mode;
+    int     has_server_drone;  // client only
+    double  server_drone_x;
+    double  server_drone_y;
 
 } WorldState;
 

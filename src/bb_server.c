@@ -385,41 +385,71 @@ int main(int argc, char *argv[])
 
     const SimParams *params = sim_params_get();
 
-    sim_log_info("bb_server: params world=%dx%d obstacles=%d targets=%d "
-                 "mass=%.2f damping=%.2f dt=%.3f",
-                 params->world_width,
-                 params->world_height,
-                 params->num_obstacles,
-                 params->num_targets,
-                 params->mass,
-                 params->damping,
-                 params->dt);
-
-    sim_log_info("bb_server: repulsion params rho=%.2f eta=%.2f (DRONE_RADIUS=%.2f)",
-                 params->rho, params->eta, (double)DRONE_RADIUS);
-
     int env_enabled = (params->rho > 0.0 && params->eta > 0.0);
-    sim_log_info("bb_server: obstacle repulsion %s (Latombe-style |v|, virtual-key mapping)",
-                 env_enabled ? "ENABLED" : "DISABLED");
+    sim_log_info("bb_server: obstacle repulsion %s", env_enabled ? "ENABLED" : "DISABLED");
 
-    srand((unsigned)time(NULL));
+    // modified
+    int fd_drone_in, fd_drone_out, fd_input_in;
+    int fd_obs_in = -1, fd_tgt_in = -1;
+    int fd_net_drone_out = -1, fd_net_obs_in = -1;
+    int fd_net_server_drone_in = -1, fd_net_window_size_in = -1;
 
-    if (argc < 6) {
-        fprintf(stderr,
-                "bb_server: usage: %s <fd_drone_state_in> <fd_drone_cmd_out> "
-                "<fd_input_cmd_in> <fd_obstacles_in> <fd_targets_in>\n",
-                argv[0]);
-        return EXIT_FAILURE;
+    if (params->mode == SIM_MODE_NORMAL) {
+        // Normal mode: ./bb_server <drone_state_in> <drone_cmd_out> <input_cmd_in> <obs_in> <tgt_in> [pid_fd]
+        if (argc < 6) {
+            fprintf(stderr, "bb_server: usage (normal): %s <fd_drone_state_in> <fd_drone_cmd_out> "
+                    "<fd_input_cmd_in> <fd_obstacles_in> <fd_targets_in>\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+
+        fd_drone_in  = atoi(argv[SIM_ARG_BB_DRONE_STATE_IN]);
+        fd_drone_out = atoi(argv[SIM_ARG_BB_DRONE_CMD_OUT]);
+        fd_input_in  = atoi(argv[SIM_ARG_BB_INPUT_CMD_IN]);
+        fd_obs_in    = atoi(argv[SIM_ARG_BB_OBS_IN]);
+        fd_tgt_in    = atoi(argv[SIM_ARG_BB_TGT_IN]);
+
+        sim_log_info("bb_server: NORMAL mode, pipe FDs: drone_in=%d drone_out=%d input_in=%d obs_in=%d tgt_in=%d",
+                     fd_drone_in, fd_drone_out, fd_input_in, fd_obs_in, fd_tgt_in);
+    }
+    else if (params->mode == SIM_MODE_SERVER) {
+        // Server mode: ./bb_server <drone_state_in> <drone_cmd_out> <input_cmd_in> <net_drone_out> <net_obs_in> [pid_fd]
+        if (argc < 6) {
+            fprintf(stderr, "bb_server: usage (server): %s <fd_drone_state_in> <fd_drone_cmd_out> "
+                    "<fd_input_cmd_in> <fd_net_drone_out> <fd_net_obs_in>\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+
+        fd_drone_in       = atoi(argv[1]);
+        fd_drone_out      = atoi(argv[2]);
+        fd_input_in       = atoi(argv[3]);
+        fd_net_drone_out  = atoi(argv[4]);  // write own drone to network_server
+        fd_net_obs_in     = atoi(argv[5]);  // read client drone as obstacle
+
+        sim_log_info("bb_server: SERVER mode, pipe FDs: drone_in=%d drone_out=%d input_in=%d net_drone_out=%d net_obs_in=%d",
+                     fd_drone_in, fd_drone_out, fd_input_in, fd_net_drone_out, fd_net_obs_in);
+    }
+    else if (params->mode == SIM_MODE_CLIENT) {
+        // Client mode: ./bb_server <drone_state_in> <drone_cmd_out> <input_cmd_in> <net_drone_out> <net_server_drone_in> <net_window_size_in> [pid_fd]
+        if (argc < 7) {
+            fprintf(stderr, "bb_server: usage (client): %s <fd_drone_state_in> <fd_drone_cmd_out> "
+                    "<fd_input_cmd_in> <fd_net_drone_out> <fd_net_server_drone_in> <fd_net_window_size_in>\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+
+        fd_drone_in              = atoi(argv[1]);
+        fd_drone_out             = atoi(argv[2]);
+        fd_input_in              = atoi(argv[3]);
+        fd_net_drone_out         = atoi(argv[4]);  // write own drone to network_client
+        fd_net_server_drone_in   = atoi(argv[5]);  // read server's drone position
+        fd_net_window_size_in    = atoi(argv[6]);  // read window dimensions
+
+        sim_log_info("bb_server: CLIENT mode, pipe FDs: drone_in=%d drone_out=%d input_in=%d "
+                     "net_drone_out=%d net_server_drone_in=%d net_window_size_in=%d",
+                     fd_drone_in, fd_drone_out, fd_input_in,
+                     fd_net_drone_out, fd_net_server_drone_in, fd_net_window_size_in);
     }
 
-    int fd_drone_in  = atoi(argv[SIM_ARG_BB_DRONE_STATE_IN]);
-    int fd_drone_out = atoi(argv[SIM_ARG_BB_DRONE_CMD_OUT]);
-    int fd_input_in  = atoi(argv[SIM_ARG_BB_INPUT_CMD_IN]);
-    int fd_obs_in    = atoi(argv[SIM_ARG_BB_OBS_IN]);
-    int fd_tgt_in    = atoi(argv[SIM_ARG_BB_TGT_IN]);
 
-    sim_log_info("bb_server: pipe FDs: drone_in=%d drone_out=%d input_in=%d obs_in=%d tgt_in=%d",
-                 fd_drone_in, fd_drone_out, fd_input_in, fd_obs_in, fd_tgt_in);
 
     WorldState   world;
     CommandState user_cmd;
@@ -428,8 +458,23 @@ int main(int argc, char *argv[])
     world.drone.y  = 0.0;
     world.drone.vx = 0.0;
     world.drone.vy = 0.0;
-    world.world_width  = params->world_width;
-    world.world_height = params->world_height;
+
+    world.mode = params->mode;  // Store current mode
+
+    if (params->mode == SIM_MODE_CLIENT) {
+        // Client: wait for server to send dimensions
+        world.world_width  = 0;
+        world.world_height = 0;
+    } else {
+        // Normal and server: use config dimensions
+        world.world_width  = params->world_width;
+        world.world_height = params->world_height;
+    }
+
+    // Initialize network-specific fields
+    world.has_server_drone = 0;
+    world.server_drone_x   = 0.0;
+    world.server_drone_y   = 0.0;
 
     world.cmd.fx       = 0.0;
     world.cmd.fy       = 0.0;
@@ -478,6 +523,32 @@ int main(int argc, char *argv[])
     int input_received  = 0;
     int rep_active_prev = 0;
 
+    // handle client mode window size reception
+    if (params->mode == SIM_MODE_CLIENT) {
+        // Read window dimensions from network_client
+        typedef struct {
+            int width;
+            int height;
+        } WindowDimensions;
+
+        WindowDimensions win_dims;
+        ssize_t r = read_full(fd_net_window_size_in, &win_dims, sizeof(win_dims));
+        if (r != (ssize_t)sizeof(win_dims)) {
+            sim_log_info("bb_server: failed to receive window dimensions from network_client");
+            return EXIT_FAILURE;
+        }
+
+        world.world_width  = win_dims.width;
+        world.world_height = win_dims.height;
+
+        sim_log_info("bb_server: CLIENT received window dimensions %dx%d",
+                     world.world_width, world.world_height);
+
+        close(fd_net_window_size_in);  // no longer needed
+    }
+
+
+
     ui_init();
 
     int start_sim = 0;
@@ -512,13 +583,30 @@ int main(int argc, char *argv[])
 
     sim_log_info("bb_server: entering main loop");
 
-    int obs_to_read = params->num_obstacles;
-    if (obs_to_read > SIM_MAX_OBSTACLES) obs_to_read = SIM_MAX_OBSTACLES;
-    if (obs_to_read < 0) obs_to_read = 0;
+    // we make this for the network
 
-    int tgt_to_read = params->num_targets;
-    if (tgt_to_read > SIM_MAX_TARGETS) tgt_to_read = SIM_MAX_TARGETS;
-    if (tgt_to_read < 0) tgt_to_read = 0;
+    int obs_to_read = 0;
+    int tgt_to_read = 0;
+
+    if (params->mode == SIM_MODE_NORMAL) {
+        obs_to_read = params->num_obstacles;
+        if (obs_to_read > SIM_MAX_OBSTACLES) obs_to_read = SIM_MAX_OBSTACLES;
+        if (obs_to_read < 0) obs_to_read = 0;
+
+        tgt_to_read = params->num_targets;
+        if (tgt_to_read > SIM_MAX_TARGETS) tgt_to_read = SIM_MAX_TARGETS;
+        if (tgt_to_read < 0) tgt_to_read = 0;
+    }
+    else if (params->mode == SIM_MODE_SERVER) {
+        // Server mode: one obstacle slot for client drone
+        obs_to_read = 1;
+        tgt_to_read = 0;
+    }
+    else if (params->mode == SIM_MODE_CLIENT) {
+        // Client mode: no obstacles or targets
+        obs_to_read = 0;
+        tgt_to_read = 0;
+    }
 
     world.obstacles_slots = obs_to_read;
     world.targets_slots   = tgt_to_read;
@@ -529,15 +617,32 @@ int main(int argc, char *argv[])
         fd_set readfds;
         FD_ZERO(&readfds);
 
-        FD_SET(fd_drone_in, &readfds);
-        FD_SET(fd_input_in, &readfds);
-        FD_SET(fd_obs_in,   &readfds);
-        FD_SET(fd_tgt_in,   &readfds);
+        // network separation 
+        if (params->mode == SIM_MODE_NORMAL) {
+            FD_SET(fd_obs_in, &readfds);
+            FD_SET(fd_tgt_in, &readfds);
+        }
+        else if (params->mode == SIM_MODE_SERVER) {
+            FD_SET(fd_net_obs_in, &readfds);  // read client drone as obstacle
+        }
+        else if (params->mode == SIM_MODE_CLIENT) {
+            FD_SET(fd_net_server_drone_in, &readfds);  // read server's drone
+        }
 
         int maxfd = fd_drone_in;
         if (fd_input_in > maxfd) maxfd = fd_input_in;
-        if (fd_obs_in   > maxfd) maxfd = fd_obs_in;
-        if (fd_tgt_in   > maxfd) maxfd = fd_tgt_in;
+
+
+        if (params->mode == SIM_MODE_NORMAL) {
+            if (fd_obs_in > maxfd) maxfd = fd_obs_in;
+            if (fd_tgt_in > maxfd) maxfd = fd_tgt_in;
+        }
+        else if (params->mode == SIM_MODE_SERVER) {
+            if (fd_net_obs_in > maxfd) maxfd = fd_net_obs_in;
+        }
+        else if (params->mode == SIM_MODE_CLIENT) {
+            if (fd_net_server_drone_in > maxfd) maxfd = fd_net_server_drone_in;
+        }
 
         struct timeval tv;
         tv.tv_sec  = 0;
@@ -578,6 +683,18 @@ int main(int argc, char *argv[])
                         world.total_distance += dist;
                     }
 
+                    // Send own drone position to network process
+                    if (params->mode == SIM_MODE_SERVER || params->mode == SIM_MODE_CLIENT) {
+                        ssize_t w = write_full(fd_net_drone_out, &ds, sizeof(ds));
+                        if (w != (ssize_t)sizeof(ds)) {
+                            endwin();
+                            perror("bb_server: write_full(network drone)");
+                            running = 0;
+                        }
+                    }
+
+
+
                 } else if (r == 0) {
                     sim_log_info("bb_server: drone pipe EOF");
                     running = 0;
@@ -614,7 +731,28 @@ int main(int argc, char *argv[])
                 }
             }
 
-            if (FD_ISSET(fd_obs_in, &readfds) && obs_to_read > 0) {
+            // if (FD_ISSET(fd_obs_in, &readfds) && obs_to_read > 0) {
+            //     ssize_t expected = (ssize_t)(obs_to_read * (int)sizeof(Obstacle));
+            //     ssize_t r = read_full(fd_obs_in, world.obstacles,
+            //                           (size_t)(obs_to_read * (int)sizeof(Obstacle)));
+            //     if (r == expected) {
+            //         int count = 0;
+            //         for (int i = 0; i < obs_to_read; ++i) {
+            //             if (world.obstacles[i].active) ++count;
+            //         }
+            //         world.num_obstacles = count;
+            //     } else if (r == 0) {
+            //         sim_log_info("bb_server: obstacles pipe EOF");
+            //         obs_to_read = 0;
+            //         world.obstacles_slots = 0;
+            //     } else if (r < 0) {
+            //         endwin();
+            //         perror("bb_server: read_full(obstacles)");
+            //         running = 0;
+            //     }
+            // }
+
+            if (params->mode == SIM_MODE_NORMAL && FD_ISSET(fd_obs_in, &readfds) && obs_to_read > 0) {
                 ssize_t expected = (ssize_t)(obs_to_read * (int)sizeof(Obstacle));
                 ssize_t r = read_full(fd_obs_in, world.obstacles,
                                       (size_t)(obs_to_read * (int)sizeof(Obstacle)));
@@ -634,8 +772,46 @@ int main(int argc, char *argv[])
                     running = 0;
                 }
             }
+            else if (params->mode == SIM_MODE_SERVER && FD_ISSET(fd_net_obs_in, &readfds)) {
+                // Read client drone as single obstacle
+                Obstacle client_obs;
+                ssize_t r = read_full(fd_net_obs_in, &client_obs, sizeof(client_obs));
+                if (r == (ssize_t)sizeof(client_obs)) {
+                    world.obstacles[0] = client_obs;
+                    world.num_obstacles = (client_obs.active) ? 1 : 0;
+                } else if (r == 0) {
+                    sim_log_info("bb_server: network obstacle pipe EOF (client disconnected)");
+                    running = 0;
+                } else {
+                    endwin();
+                    perror("bb_server: read_full(network obstacle)");
+                    running = 0;
+                }
+            }
 
-            if (FD_ISSET(fd_tgt_in, &readfds) && tgt_to_read > 0) {
+            // if (FD_ISSET(fd_tgt_in, &readfds) && tgt_to_read > 0) {
+            //     ssize_t expected = (ssize_t)(tgt_to_read * (int)sizeof(Target));
+            //     ssize_t r = read_full(fd_tgt_in, world.targets,
+            //                           (size_t)(tgt_to_read * (int)sizeof(Target)));
+            //     if (r == expected) {
+            //         int count = 0;
+            //         for (int i = 0; i < tgt_to_read; ++i) {
+            //             if (world.targets[i].active) ++count;
+            //         }
+            //         world.num_targets = count;
+            //         have_targets      = 1;
+            //     } else if (r == 0) {
+            //         sim_log_info("bb_server: targets pipe EOF");
+            //         tgt_to_read = 0;
+            //         world.targets_slots = 0;
+            //     } else if (r < 0) {
+            //         endwin();
+            //         perror("bb_server: read_full(targets)");
+            //         running = 0;
+            //     }
+            // }
+
+             if (params->mode == SIM_MODE_NORMAL && FD_ISSET(fd_tgt_in, &readfds) && tgt_to_read > 0) {
                 ssize_t expected = (ssize_t)(tgt_to_read * (int)sizeof(Target));
                 ssize_t r = read_full(fd_tgt_in, world.targets,
                                       (size_t)(tgt_to_read * (int)sizeof(Target)));
@@ -656,11 +832,29 @@ int main(int argc, char *argv[])
                     running = 0;
                 }
             }
+            else if (params->mode == SIM_MODE_CLIENT && FD_ISSET(fd_net_server_drone_in, &readfds)) {
+                // Read server's drone position
+                DroneState server_drone;
+                ssize_t r = read_full(fd_net_server_drone_in, &server_drone, sizeof(server_drone));
+                if (r == (ssize_t)sizeof(server_drone)) {
+                    world.server_drone_x = server_drone.x;
+                    world.server_drone_y = server_drone.y;
+                    world.has_server_drone = 1;
+                } else if (r == 0) {
+                    sim_log_info("bb_server: network server drone pipe EOF (server disconnected)");
+                    running = 0;
+                } else {
+                    endwin();
+                    perror("bb_server: read_full(server drone)");
+                    running = 0;
+                }
+            }
+
         }
 
         g_current_code_area = CODE_AREA_PHYSICS_UPDATE;
 
-        if (have_prev_pos && have_drone_state && have_targets) {
+        if (params->mode == SIM_MODE_NORMAL && have_prev_pos && have_drone_state && have_targets) {
             handle_targets(&world, params, prev_x, prev_y);
         }
 
@@ -720,6 +914,20 @@ int main(int argc, char *argv[])
     close(fd_input_in);
     close(fd_obs_in);
     close(fd_tgt_in);
+
+    if (params->mode == SIM_MODE_NORMAL) {
+        close(fd_obs_in);
+        close(fd_tgt_in);
+    }
+    else if (params->mode == SIM_MODE_SERVER) {
+        close(fd_net_drone_out);
+        close(fd_net_obs_in);
+    }
+    else if (params->mode == SIM_MODE_CLIENT) {
+        close(fd_net_drone_out);
+        close(fd_net_server_drone_in);
+        // fd_net_window_size_in already closed after reading
+    }
 
     sim_log_info("bb_server: exited");
     sim_log_close();

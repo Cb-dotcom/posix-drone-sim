@@ -77,6 +77,8 @@ int main(int argc, char *argv[])
                 SIM_PARAMS_DEFAULT_PATH);
     }
 
+    const SimParams *params = sim_params_get();     // get the parameters
+
     int pipe_drone_cmd[2];          // bb_server -> drone (CommandState)
     int pipe_drone_state[2];        // drone -> bb_server (DroneState)
     int pipe_input_cmd[2];          // input -> bb_server (CommandState)
@@ -84,6 +86,13 @@ int main(int argc, char *argv[])
     int pipe_targets[2];            // targets   -> bb_server (Target[])
     int pipe_obstacles_drone[2];    // obstacles -> drone (Obstacle[])
     int pipe_watchdog[2];           // master -> watchdog (pid list)
+
+    // new pipe declarations for third assignment
+    int pipe_network_drone_in[2];      // bb_server -> network process (drone position)
+    int pipe_network_obstacle_in[2];   // network -> bb_server (client drone as obstacle - SERVER mode)
+    int pipe_network_server_drone[2];  // network -> bb_server (server drone position - CLIENT mode)
+    int pipe_network_window_size[2];   // network -> bb_server (window dimensions - CLIENT mode)
+
 
     // Create PID report pipes for konsole-launched processes
     int pidpipe_bb[2]; // bb_server -> master PID reporting
@@ -100,42 +109,56 @@ int main(int argc, char *argv[])
     if (pipe(pidpipe_bb) == -1) { perror("master: pidpipe_bb"); return EXIT_FAILURE; }
     if (pipe(pidpipe_in) == -1) { perror("master: pidpipe_in"); return EXIT_FAILURE; }
 
-    
-    // Start WATCHDOG first (blocks reading until master writes pid list)
-    pid_t wd_pid = fork();
-    if (wd_pid < 0) {
-        perror("master: fork watchdog");
-        return EXIT_FAILURE;
-    }
-    if (wd_pid == 0) {
-        // Child: watchdog keeps pipe_watchdog[0]
-        safe_close(pipe_watchdog[1]);
+    // now we create the pipes that we added
+    if (pipe(pipe_network_drone_in) == -1) { perror("master: pipe_network_drone_in"); return EXIT_FAILURE; }
+    if (pipe(pipe_network_obstacle_in) == -1) { perror("master: pipe_network_obstacle_in"); return EXIT_FAILURE; }
+    if (pipe(pipe_network_server_drone) == -1) { perror("master: pipe_network_server_drone"); return EXIT_FAILURE; }
+    if (pipe(pipe_network_window_size) == -1) { perror("master: pipe_network_window_size"); return EXIT_FAILURE; }
 
-        // Close everything else
-        safe_close(pipe_drone_cmd[0]); safe_close(pipe_drone_cmd[1]);
-        safe_close(pipe_drone_state[0]); safe_close(pipe_drone_state[1]);
-        safe_close(pipe_input_cmd[0]); safe_close(pipe_input_cmd[1]);
-        safe_close(pipe_obstacles[0]); safe_close(pipe_obstacles[1]);
-        safe_close(pipe_targets[0]); safe_close(pipe_targets[1]);
-        safe_close(pipe_obstacles_drone[0]); safe_close(pipe_obstacles_drone[1]);
-        safe_close(pidpipe_bb[0]); safe_close(pidpipe_bb[1]);
-        safe_close(pidpipe_in[0]); safe_close(pidpipe_in[1]);
+    // THE WATCHDOG SHOULD BE SPAWNED IF THE MODE IS NORMAL!!!
 
-        char fd_read[16];
-        snprintf(fd_read, sizeof(fd_read), "%d", pipe_watchdog[0]);
-        execl("./watchdog", "./watchdog", fd_read, (char *)NULL);
-        perror("master: exec watchdog");
-        _exit(EXIT_FAILURE);
-    }
+    pid_t wd_pid = -1; // lets initialize it to -1
 
-    // Parent: will write pid list later
-    safe_close(pipe_watchdog[0]);
+    if (params->mode == SIM_MODE_NORMAL) {
+        // Start WATCHDOG first (blocks reading until master writes pid list)
+        wd_pid = fork();        // here we give it its actual value
+        if (wd_pid < 0) {
+            perror("master: fork watchdog");
+            return EXIT_FAILURE;
+        }
+        if (wd_pid == 0) {
+            // Child: watchdog keeps pipe_watchdog[0]
+            safe_close(pipe_watchdog[1]);
 
-    // Export watchdog PID to all children (they inherit env)
-    {
-        char wd_pid_str[32];
-        snprintf(wd_pid_str, sizeof(wd_pid_str), "%d", (int)wd_pid);
-        setenv("SIM_WD_PID", wd_pid_str, 1);
+            // Close everything else
+            safe_close(pipe_drone_cmd[0]); safe_close(pipe_drone_cmd[1]);
+            safe_close(pipe_drone_state[0]); safe_close(pipe_drone_state[1]);
+            safe_close(pipe_input_cmd[0]); safe_close(pipe_input_cmd[1]);
+            safe_close(pipe_obstacles[0]); safe_close(pipe_obstacles[1]);
+            safe_close(pipe_targets[0]); safe_close(pipe_targets[1]);
+            safe_close(pipe_obstacles_drone[0]); safe_close(pipe_obstacles_drone[1]);
+            safe_close(pidpipe_bb[0]); safe_close(pidpipe_bb[1]);
+            safe_close(pidpipe_in[0]); safe_close(pidpipe_in[1]);
+
+            char fd_read[16];
+            snprintf(fd_read, sizeof(fd_read), "%d", pipe_watchdog[0]);
+            execl("./watchdog", "./watchdog", fd_read, (char *)NULL);
+            perror("master: exec watchdog");
+            _exit(EXIT_FAILURE);
+        }
+        else{
+            // Parent: will write pid list later
+            safe_close(pipe_watchdog[0]);
+            //safe_close(pipe_watchdog[1]);
+        }
+        
+
+        // Export watchdog PID to all children (they inherit env)
+        {
+            char wd_pid_str[32];
+            snprintf(wd_pid_str, sizeof(wd_pid_str), "%d", (int)wd_pid);
+            setenv("SIM_WD_PID", wd_pid_str, 1);
+        }
     }
 
     // bb_server (konsole) + PID handshake
@@ -152,51 +175,116 @@ int main(int argc, char *argv[])
         close(pipe_drone_state[1]);
         close(pipe_drone_cmd[0]);
         close(pipe_input_cmd[1]);
-        close(pipe_obstacles[1]);
-        close(pipe_targets[1]);
+
+        // mode check
+        if (params->mode == SIM_MODE_NORMAL) {
+            // Normal mode: bb_server needs obstacle/target pipes
+            close(pipe_obstacles[1]);
+            close(pipe_targets[1]);
+            
+            // Close unused network pipes
+            close(pipe_network_drone_in[0]); close(pipe_network_drone_in[1]);
+            close(pipe_network_obstacle_in[0]); close(pipe_network_obstacle_in[1]);
+            close(pipe_network_server_drone[0]); close(pipe_network_server_drone[1]);
+            close(pipe_network_window_size[0]); close(pipe_network_window_size[1]);
+        }
+        else if (params->mode == SIM_MODE_SERVER) {
+            // Server mode: need network pipes, no obstacle/target pipes
+            close(pipe_obstacles[0]); close(pipe_obstacles[1]);
+            close(pipe_targets[0]); close(pipe_targets[1]);
+            
+            close(pipe_network_drone_in[0]);      // bb_server writes here
+            close(pipe_network_obstacle_in[1]);   // bb_server reads here
+            
+            // Close unused client-specific pipes
+            close(pipe_network_server_drone[0]); close(pipe_network_server_drone[1]);
+            close(pipe_network_window_size[0]); close(pipe_network_window_size[1]);
+        }
+        else if (params->mode == SIM_MODE_CLIENT) {
+            // Client mode: need network pipes, no obstacle/target pipes
+            close(pipe_obstacles[0]); close(pipe_obstacles[1]);
+            close(pipe_targets[0]); close(pipe_targets[1]);
+            
+            close(pipe_network_drone_in[0]);        // bb_server writes here
+            close(pipe_network_server_drone[1]);    // bb_server reads here
+            close(pipe_network_window_size[1]);     // bb_server reads here
+            
+            // Close unused server-specific pipes
+            close(pipe_network_obstacle_in[0]); close(pipe_network_obstacle_in[1]);
+        }
 
         // not used here
         close(pipe_obstacles_drone[0]);
         close(pipe_obstacles_drone[1]);
-
         // watchdog pipe not used by bb_server
         close(pipe_watchdog[1]);
-
         // PID pipe: keep write-end only
         close(pidpipe_bb[0]);
         // close other pid pipe fully
         close(pidpipe_in[0]); close(pidpipe_in[1]);
 
-        char fd_drone_state_in[16], fd_drone_cmd_out[16], fd_input_cmd_in[16], fd_obs_in[16], fd_tgt_in[16];
-        char fd_pid_report[16];
+        // we modify the exec calls to make them aware about the mode
+        char fd_drone_state_in[16], fd_drone_cmd_out[16], fd_input_cmd_in[16];
+        char fd_obs_in[16], fd_tgt_in[16], fd_pid_report[16];
+        char fd_net_drone_out[16], fd_net_obs_in[16];
+        char fd_net_server_drone_in[16], fd_net_window_size_in[16];
 
         snprintf(fd_drone_state_in, sizeof(fd_drone_state_in), "%d", pipe_drone_state[0]);
         snprintf(fd_drone_cmd_out,  sizeof(fd_drone_cmd_out),  "%d", pipe_drone_cmd[1]);
         snprintf(fd_input_cmd_in,   sizeof(fd_input_cmd_in),   "%d", pipe_input_cmd[0]);
-        snprintf(fd_obs_in,         sizeof(fd_obs_in),         "%d", pipe_obstacles[0]);
-        snprintf(fd_tgt_in,         sizeof(fd_tgt_in),         "%d", pipe_targets[0]);
         snprintf(fd_pid_report,     sizeof(fd_pid_report),     "%d", pidpipe_bb[1]);
 
-        execlp("konsole", "konsole",
-               "-T", "BB_SERVER",
-               "-e", "./bb_server",
-               fd_drone_state_in,
-               fd_drone_cmd_out,
-               fd_input_cmd_in,
-               fd_obs_in,
-               fd_tgt_in,
-               fd_pid_report,            // <-- last arg = pid report fd
-               (char *)NULL);
+        if (params->mode == SIM_MODE_NORMAL) {
+            snprintf(fd_obs_in, sizeof(fd_obs_in), "%d", pipe_obstacles[0]);
+            snprintf(fd_tgt_in, sizeof(fd_tgt_in), "%d", pipe_targets[0]);
 
-        // Fallback if konsole not available
-        execl("./bb_server", "./bb_server",
-              fd_drone_state_in,
-              fd_drone_cmd_out,
-              fd_input_cmd_in,
-              fd_obs_in,
-              fd_tgt_in,
-              fd_pid_report,             // <-- keep same last arg
-              (char *)NULL);
+            execlp("konsole", "konsole",
+                   "-T", "BB_SERVER",
+                   "-e", "./bb_server",
+                   fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                   fd_obs_in, fd_tgt_in, fd_pid_report,
+                   (char *)NULL);
+
+            execl("./bb_server", "./bb_server",
+                  fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                  fd_obs_in, fd_tgt_in, fd_pid_report,
+                  (char *)NULL);
+        }
+        else if (params->mode == SIM_MODE_SERVER) {
+            snprintf(fd_net_drone_out, sizeof(fd_net_drone_out), "%d", pipe_network_drone_in[1]);
+            snprintf(fd_net_obs_in, sizeof(fd_net_obs_in), "%d", pipe_network_obstacle_in[0]);
+
+            execlp("konsole", "konsole",
+                   "-T", "BB_SERVER (SERVER MODE)",
+                   "-e", "./bb_server",
+                   fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                   fd_net_drone_out, fd_net_obs_in, fd_pid_report,
+                   (char *)NULL);
+
+            execl("./bb_server", "./bb_server",
+                  fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                  fd_net_drone_out, fd_net_obs_in, fd_pid_report,
+                  (char *)NULL);
+        }
+        else if (params->mode == SIM_MODE_CLIENT) {
+            snprintf(fd_net_drone_out, sizeof(fd_net_drone_out), "%d", pipe_network_drone_in[1]);
+            snprintf(fd_net_server_drone_in, sizeof(fd_net_server_drone_in), "%d", pipe_network_server_drone[0]);
+            snprintf(fd_net_window_size_in, sizeof(fd_net_window_size_in), "%d", pipe_network_window_size[0]);
+
+            execlp("konsole", "konsole",
+                   "-T", "BB_SERVER (CLIENT MODE)",
+                   "-e", "./bb_server",
+                   fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                   fd_net_drone_out, fd_net_server_drone_in, fd_net_window_size_in,
+                   fd_pid_report,
+                   (char *)NULL);
+
+            execl("./bb_server", "./bb_server",
+                  fd_drone_state_in, fd_drone_cmd_out, fd_input_cmd_in,
+                  fd_net_drone_out, fd_net_server_drone_in, fd_net_window_size_in,
+                  fd_pid_report,
+                  (char *)NULL);
+        }
 
         perror("master: exec bb_server");
         _exit(EXIT_FAILURE);
@@ -296,68 +384,177 @@ int main(int argc, char *argv[])
         _exit(EXIT_FAILURE);
     }
 
-    // Obstacles (direct child)
-    pid_t obstacles_pid = fork();
-    if (obstacles_pid < 0) {
-        perror("master: fork obstacles");
-        return EXIT_FAILURE;
-    }
-    if (obstacles_pid == 0) {
-        // keep: pipe_obstacles[1], pipe_obstacles_drone[1]
-        close(pipe_obstacles[0]);
-        close(pipe_obstacles_drone[0]);
+    // Obstacles (direct child). We check if the mode
+    pid_t obstacles_pid = -1;
+    if (params->mode == SIM_MODE_NORMAL) {
+        
+        obstacles_pid = fork();
 
-        close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
-        close(pipe_drone_state[0]); close(pipe_drone_state[1]);
-        close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
-        close(pipe_targets[0]); close(pipe_targets[1]);
-        close(pipe_watchdog[1]);
+        if (obstacles_pid < 0) {
+            perror("master: fork obstacles");
+            return EXIT_FAILURE;
+        }
+        if (obstacles_pid == 0) {
+            // keep: pipe_obstacles[1], pipe_obstacles_drone[1]
+            close(pipe_obstacles[0]);
+            close(pipe_obstacles_drone[0]);
 
-        // close pidpipes
-        close(pidpipe_bb[0]); close(pidpipe_bb[1]);
-        close(pidpipe_in[0]); close(pidpipe_in[1]);
+            close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
+            close(pipe_drone_state[0]); close(pipe_drone_state[1]);
+            close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
+            close(pipe_targets[0]); close(pipe_targets[1]);
+            close(pipe_watchdog[1]);
 
-        char fd_obs_out_bb[16], fd_obs_out_drone[16];
-        snprintf(fd_obs_out_bb,    sizeof(fd_obs_out_bb),    "%d", pipe_obstacles[1]);
-        snprintf(fd_obs_out_drone, sizeof(fd_obs_out_drone), "%d", pipe_obstacles_drone[1]);
+            // close pidpipes
+            close(pidpipe_bb[0]); close(pidpipe_bb[1]);
+            close(pidpipe_in[0]); close(pidpipe_in[1]);
 
-        execl("./obstacles", "./obstacles", fd_obs_out_bb, fd_obs_out_drone, (char *)NULL);
-        perror("master: exec obstacles");
-        _exit(EXIT_FAILURE);
-    }
+            char fd_obs_out_bb[16], fd_obs_out_drone[16];
+            snprintf(fd_obs_out_bb,    sizeof(fd_obs_out_bb),    "%d", pipe_obstacles[1]);
+            snprintf(fd_obs_out_drone, sizeof(fd_obs_out_drone), "%d", pipe_obstacles_drone[1]);
 
-    // Targets (direct child)
-    pid_t targets_pid = fork();
-    if (targets_pid < 0) {
-        perror("master: fork targets");
-        return EXIT_FAILURE;
-    }
-    if (targets_pid == 0) {
-        close(pipe_targets[0]);
-
-        close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
-        close(pipe_drone_state[0]); close(pipe_drone_state[1]);
-        close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
+            execl("./obstacles", "./obstacles", fd_obs_out_bb, fd_obs_out_drone, (char *)NULL);
+            perror("master: exec obstacles");
+            _exit(EXIT_FAILURE);
+        }
+    } else{
+        // Network modes: no obstacles process
         close(pipe_obstacles[0]); close(pipe_obstacles[1]);
         close(pipe_obstacles_drone[0]); close(pipe_obstacles_drone[1]);
-
-        close(pipe_watchdog[1]);
-
-        // close pidpipes
-        close(pidpipe_bb[0]); close(pidpipe_bb[1]);
-        close(pidpipe_in[0]); close(pidpipe_in[1]);
-
-        char fd_tgt_out[16];
-        snprintf(fd_tgt_out, sizeof(fd_tgt_out), "%d", pipe_targets[1]);
-
-        execl("./targets", "./targets", fd_tgt_out, (char *)NULL);
-        perror("master: exec targets");
-        _exit(EXIT_FAILURE);
     }
 
 
-    // Send PID list to watchdog (REAL PIDs for konsole-launched procs)
-    {
+
+    // Targets (direct child)
+    pid_t targets_pid = -1;
+    if (params->mode == SIM_MODE_NORMAL) {
+
+        targets_pid = fork();
+
+        if (targets_pid < 0) {
+            perror("master: fork targets");
+            return EXIT_FAILURE;
+        }
+        if (targets_pid == 0) {
+            close(pipe_targets[0]);
+
+            close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
+            close(pipe_drone_state[0]); close(pipe_drone_state[1]);
+            close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
+            close(pipe_obstacles[0]); close(pipe_obstacles[1]);
+            close(pipe_obstacles_drone[0]); close(pipe_obstacles_drone[1]);
+
+            close(pipe_watchdog[1]);
+
+            // close pidpipes
+            close(pidpipe_bb[0]); close(pidpipe_bb[1]);
+            close(pidpipe_in[0]); close(pidpipe_in[1]);
+
+            char fd_tgt_out[16];
+            snprintf(fd_tgt_out, sizeof(fd_tgt_out), "%d", pipe_targets[1]);
+
+            execl("./targets", "./targets", fd_tgt_out, (char *)NULL);
+            perror("master: exec targets");
+            _exit(EXIT_FAILURE);
+        }
+    }
+    else {
+        // Network modes: no targets process
+        close(pipe_targets[0]); close(pipe_targets[1]);
+    }
+
+    // we add network proces spawning
+    pid_t network_pid = -1;
+    if (params->mode == SIM_MODE_SERVER) {
+        network_pid = fork();
+        if (network_pid < 0) {
+            perror("master: fork network_server");
+            return EXIT_FAILURE;
+        }
+        if (network_pid == 0) {
+            // Child: network_server
+            close(pipe_network_drone_in[1]);      // keep read end
+            close(pipe_network_obstacle_in[0]);   // keep write end
+
+            // Close all other pipes
+            close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
+            close(pipe_drone_state[0]); close(pipe_drone_state[1]);
+            close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
+            close(pipe_obstacles[0]); close(pipe_obstacles[1]);
+            close(pipe_targets[0]); close(pipe_targets[1]);
+            close(pipe_obstacles_drone[0]); close(pipe_obstacles_drone[1]);
+            close(pipe_watchdog[1]);
+            close(pidpipe_bb[0]); close(pidpipe_bb[1]);
+            close(pidpipe_in[0]); close(pidpipe_in[1]);
+            close(pipe_network_server_drone[0]); close(pipe_network_server_drone[1]);
+            close(pipe_network_window_size[0]); close(pipe_network_window_size[1]);
+
+            char fd_drone_in[16], fd_obstacle_out[16];
+            snprintf(fd_drone_in, sizeof(fd_drone_in), "%d", pipe_network_drone_in[0]);
+            snprintf(fd_obstacle_out, sizeof(fd_obstacle_out), "%d", pipe_network_obstacle_in[1]);
+
+            execl("./network_server", "./network_server", fd_drone_in, fd_obstacle_out, (char *)NULL);
+            perror("master: exec network_server");
+            _exit(EXIT_FAILURE);
+        }
+        
+        // Parent: close unused ends
+        close(pipe_network_drone_in[0]);
+        close(pipe_network_obstacle_in[1]);
+    }
+    else if (params->mode == SIM_MODE_CLIENT) {
+        network_pid = fork();
+        if (network_pid < 0) {
+            perror("master: fork network_client");
+            return EXIT_FAILURE;
+        }
+        if (network_pid == 0) {
+            // Child: network_client
+            close(pipe_network_drone_in[1]);        // keep read end
+            close(pipe_network_server_drone[0]);    // keep write end
+            close(pipe_network_window_size[0]);     // keep write end
+
+            // Close all other pipes
+            close(pipe_drone_cmd[0]); close(pipe_drone_cmd[1]);
+            close(pipe_drone_state[0]); close(pipe_drone_state[1]);
+            close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
+            close(pipe_obstacles[0]); close(pipe_obstacles[1]);
+            close(pipe_targets[0]); close(pipe_targets[1]);
+            close(pipe_obstacles_drone[0]); close(pipe_obstacles_drone[1]);
+            close(pipe_watchdog[1]);
+            close(pidpipe_bb[0]); close(pidpipe_bb[1]);
+            close(pidpipe_in[0]); close(pidpipe_in[1]);
+            close(pipe_network_obstacle_in[0]); close(pipe_network_obstacle_in[1]);
+
+            char fd_drone_in[16], fd_server_drone_out[16], fd_window_size_out[16];
+            snprintf(fd_drone_in, sizeof(fd_drone_in), "%d", pipe_network_drone_in[0]);
+            snprintf(fd_server_drone_out, sizeof(fd_server_drone_out), "%d", pipe_network_server_drone[1]);
+            snprintf(fd_window_size_out, sizeof(fd_window_size_out), "%d", pipe_network_window_size[1]);
+
+            execl("./network_client", "./network_client",
+                  fd_drone_in, fd_server_drone_out, fd_window_size_out,
+                  (char *)NULL);
+            perror("master: exec network_client");
+            _exit(EXIT_FAILURE);
+        }
+        
+        // Parent: close unused ends
+        close(pipe_network_drone_in[0]);
+        close(pipe_network_server_drone[1]);
+        close(pipe_network_window_size[1]);
+    }
+    else {
+        // Normal mode: close all network pipes
+        close(pipe_network_drone_in[0]); close(pipe_network_drone_in[1]);
+        close(pipe_network_obstacle_in[0]); close(pipe_network_obstacle_in[1]);
+        close(pipe_network_server_drone[0]); close(pipe_network_server_drone[1]);
+        close(pipe_network_window_size[0]); close(pipe_network_window_size[1]);
+    }
+
+
+
+    if (params->mode == SIM_MODE_NORMAL){
+        // Send PID list to watchdog (REAL PIDs for konsole-launched procs)
         pid_t pids[16];
         int n = 0;
 
@@ -387,21 +584,32 @@ int main(int argc, char *argv[])
     safe_close(pipe_targets[0]);     safe_close(pipe_targets[1]);
     safe_close(pipe_obstacles_drone[0]); safe_close(pipe_obstacles_drone[1]);
 
+    // The correct processes for each mode will be waited
 
     // Wait for direct children
     // NOTE: bb_server/input real pids are NOT our children when using konsole.
     // We must wait for the konsole processes we forked.
     int status;
     (void)waitpid(drone_pid, &status, 0);
-    (void)waitpid(obstacles_pid, &status, 0);
-    (void)waitpid(targets_pid, &status, 0);
+    
+    if (params->mode == SIM_MODE_NORMAL) {
+        (void)waitpid(obstacles_pid, &status, 0);
+        (void)waitpid(targets_pid, &status, 0);
+    } else {
+        // Network modes: wait for network process
+        if (network_pid > 0) {
+            (void)waitpid(network_pid, &status, 0);
+        }
+    }
 
     (void)waitpid(input_konsole_pid, &status, 0);
     (void)waitpid(bb_konsole_pid, &status, 0);
 
-    // stop watchdog if still alive
-    (void)kill(wd_pid, SIGINT);
-    (void)waitpid(wd_pid, &status, 0);
+    // Stop watchdog if running
+    if (wd_pid > 1) {
+        (void)kill(wd_pid, SIGINT);
+        (void)waitpid(wd_pid, &status, 0);
+    }
 
     return EXIT_SUCCESS;
 }

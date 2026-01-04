@@ -2,6 +2,7 @@ add_library(sim_core STATIC
     sim_log.c
     sim_params.c
     sim_ipc.c
+    sim_network.c 
 )
 
 target_link_libraries(sim_core
@@ -28,8 +29,10 @@ add_executable(input     input.c)
 add_executable(obstacles obstacles.c)
 add_executable(targets   targets.c)
 add_executable(watchdog  watchdog.c)
+add_executable(network_server network_server.c) 
+add_executable(network_client network_client.c)
 
-set(SIM_EXECUTABLES master bb_server drone input obstacles targets watchdog)
+set(SIM_EXECUTABLES master bb_server drone input obstacles targets watchdog network_server network_client)
 
 foreach(target ${SIM_EXECUTABLES})
     target_link_libraries(${target}

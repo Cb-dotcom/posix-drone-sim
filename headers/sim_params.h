@@ -1,5 +1,6 @@
 #ifndef SIM_PARAMS_H
 #define SIM_PARAMS_H
+#include "sim_types.h" 
 
 // Default config file path used if sim_params_load(NULL) is called.
 #define SIM_PARAMS_DEFAULT_PATH "../../bin/conf/drone_parameters.conf"
@@ -12,6 +13,7 @@
     - Your conf keys "max_targets" and "max_obstacles" are supported and are parsed
       into num_targets / num_obstacles in sim_params.c.
 */
+
 typedef struct {
     // World geometry (simulation coordinates)
     int    world_width;
@@ -39,6 +41,11 @@ typedef struct {
     int    initial_targets;
     double obstacle_spawn_interval;
     double target_spawn_interval;
+
+    // network settings
+    SimMode mode;
+    char    server_address[64];
+    int     server_port;
 } SimParams;
 
 int sim_params_load(const char *path);
