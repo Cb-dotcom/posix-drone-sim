@@ -617,6 +617,9 @@ int main(int argc, char *argv[])
         fd_set readfds;
         FD_ZERO(&readfds);
 
+        FD_SET(fd_drone_in, &readfds);
+        FD_SET(fd_input_in, &readfds);
+
         // network separation 
         if (params->mode == SIM_MODE_NORMAL) {
             FD_SET(fd_obs_in, &readfds);
