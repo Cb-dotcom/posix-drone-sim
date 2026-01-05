@@ -77,6 +77,13 @@ int main(int argc, char *argv[])
                 SIM_PARAMS_DEFAULT_PATH);
     }
 
+    // 2. [RELAY LOGIC] Check if exe.sh passed a mode number
+    if (argc > 1) {
+        int mode_arg = atoi(argv[1]);
+        sim_params_set_mode(mode_arg);
+        sim_log_info("master: mode set via argument to %d", mode_arg);
+    }
+
     const SimParams *params = sim_params_get();     // get the parameters
 
     // ========== ADD THIS DEBUG OUTPUT ==========

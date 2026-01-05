@@ -42,6 +42,9 @@ static void sim_params_init_defaults(void)
     g_params.obstacle_spawn_interval = SIM_DEFAULT_OBSTACLE_SPAWN_INTERVAL; 
     g_params.target_spawn_interval   = SIM_DEFAULT_TARGET_SPAWN_INTERVAL;   
 
+    // Default mode is Normal (0)
+    g_params.mode = SIM_MODE_NORMAL;
+
     g_params_initialized = 1;
 }
 
@@ -182,4 +185,20 @@ void sim_params_get_copy(SimParams *out)
     if (out) {
         *out = g_params;
     }
+}
+
+
+// Add this function at the very end of the file
+void sim_params_set_mode(int mode)
+{
+    // Safety clamp
+    if (mode < 0) mode = 0; // Normal
+    if (mode > 2) mode = 2; // Client
+    
+    // Ensure params are initialized
+    if (!g_params_initialized) {
+        sim_params_init_defaults();
+    }
+    
+    g_params.mode = mode;
 }

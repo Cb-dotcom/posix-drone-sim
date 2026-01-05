@@ -51,5 +51,6 @@ typedef struct {
 int sim_params_load(const char *path);
 const SimParams *sim_params_get(void);
 void sim_params_get_copy(SimParams *out);
+void sim_params_set_mode(int mode);
 
 #endif
