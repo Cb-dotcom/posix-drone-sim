@@ -79,6 +79,16 @@ int main(int argc, char *argv[])
 
     const SimParams *params = sim_params_get();     // get the parameters
 
+    // ========== ADD THIS DEBUG OUTPUT ==========
+    fprintf(stderr, "\n=== MASTER DEBUG INFO ===\n");
+    fprintf(stderr, "Mode: %d (0=NORMAL, 1=SERVER, 2=CLIENT)\n", params->mode);
+    fprintf(stderr, "Server address: %s\n", params->server_address);
+    fprintf(stderr, "Server port: %d\n", params->server_port);
+    fprintf(stderr, "World: %dx%d\n", params->world_width, params->world_height);
+    fprintf(stderr, "=========================\n\n");
+    // ========== END DEBUG ADDITION ==========
+
+
     int pipe_drone_cmd[2];          // bb_server -> drone (CommandState)
     int pipe_drone_state[2];        // drone -> bb_server (DroneState)
     int pipe_input_cmd[2];          // input -> bb_server (CommandState)
@@ -359,27 +369,46 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     if (drone_pid == 0) {
-        // keep: pipe_drone_cmd[0], pipe_drone_state[1], pipe_obstacles_drone[0]
-        close(pipe_drone_cmd[1]);
-        close(pipe_drone_state[0]);
-
-        close(pipe_input_cmd[0]); close(pipe_input_cmd[1]);
-        close(pipe_obstacles[0]); close(pipe_obstacles[1]);
-        close(pipe_targets[0]); close(pipe_targets[1]);
-
-        close(pipe_obstacles_drone[1]); // keep read end
+        // Keep these pipes open
+        close(pipe_drone_cmd[1]);       // keep READ end
+        close(pipe_drone_state[0]);     // keep WRITE end
+        
+        // Close all unused pipes
+        close(pipe_input_cmd[0]); 
+        close(pipe_input_cmd[1]);
+        close(pipe_obstacles[0]); 
+        close(pipe_obstacles[1]);
+        close(pipe_targets[0]); 
+        close(pipe_targets[1]);
+        close(pipe_obstacles_drone[1]);  // keep READ end for obstacles
         close(pipe_watchdog[1]);
+        
+        // Close PID report pipes
+        close(pidpipe_bb[0]); 
+        close(pidpipe_bb[1]);
+        close(pidpipe_in[0]); 
+        close(pidpipe_in[1]);
+        
+        // Close network pipes (all modes)
+        close(pipe_network_drone_in[0]); 
+        close(pipe_network_drone_in[1]);
+        close(pipe_network_obstacle_in[0]); 
+        close(pipe_network_obstacle_in[1]);
+        close(pipe_network_server_drone[0]); 
+        close(pipe_network_server_drone[1]);
+        close(pipe_network_window_size[0]); 
+        close(pipe_network_window_size[1]);
 
-        // close pidpipes
-        close(pidpipe_bb[0]); close(pidpipe_bb[1]);
-        close(pidpipe_in[0]); close(pidpipe_in[1]);
-
+        // Prepare arguments for drone
         char fd_cmd_in[16], fd_state_out[16], fd_obs_in[16];
         snprintf(fd_cmd_in,    sizeof(fd_cmd_in),    "%d", pipe_drone_cmd[0]);
         snprintf(fd_state_out, sizeof(fd_state_out), "%d", pipe_drone_state[1]);
         snprintf(fd_obs_in,    sizeof(fd_obs_in),    "%d", pipe_obstacles_drone[0]);
 
+        // Execute drone
         execl("./drone", "./drone", fd_cmd_in, fd_state_out, fd_obs_in, (char *)NULL);
+        
+        // If execl returns, it failed
         perror("master: exec drone");
         _exit(EXIT_FAILURE);
     }

@@ -23,38 +23,81 @@ BIN_DIR="$BUILD_DIR/src"
 CONF_FILE="$ROOT_DIR/bin/conf/drone_parameters.conf"
 
 # --- Mode Selection Menu ---
-echo "--------------------------------"
+echo "================================"
 echo " Select Simulation Mode:"
 echo " 1) Normal (Standalone)"
 echo " 2) Server (Host)"
 echo " 3) Client (Connect)"
-echo "--------------------------------"
+echo "================================"
 read -p "Enter choice [1-3]: " mode_choice
 
 case $mode_choice in
     2)
+        echo "=== SERVER MODE SETUP ==="
+        
+        # Get server port
+        read -p "Enter port to listen on [8888]: " server_port
+        server_port=${server_port:-8888}
+        
         echo "Setting mode to SERVER..."
-        # Update config file using sed
+        echo "Server will listen on 0.0.0.0:$server_port"
+        
+        # Update config file
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's/^network_mode.*/network_mode server/' "$CONF_FILE"
+            sed -i '' "s/^network_mode.*/network_mode server/" "$CONF_FILE"
+            sed -i '' "s/^server_address.*/server_address 0.0.0.0/" "$CONF_FILE"
+            sed -i '' "s/^server_port.*/server_port $server_port/" "$CONF_FILE"
         else
-            sed -i 's/^network_mode.*/network_mode server/' "$CONF_FILE"
+            sed -i "s/^network_mode.*/network_mode server/" "$CONF_FILE"
+            sed -i "s/^server_address.*/server_address 0.0.0.0/" "$CONF_FILE"
+            sed -i "s/^server_port.*/server_port $server_port/" "$CONF_FILE"
         fi
+        
+        echo ""
+        echo "Server configured. Waiting for client connection..."
+        echo "Press Enter to start server..."
+        read
         ;;
+        
     3)
+        echo "=== CLIENT MODE SETUP ==="
+        
+        # Get server address
+        read -p "Enter server IP address [127.0.0.1]: " server_ip
+        server_ip=${server_ip:-127.0.0.1}
+        
+        # Get server port
+        read -p "Enter server port [8888]: " server_port
+        server_port=${server_port:-8888}
+        
         echo "Setting mode to CLIENT..."
+        echo "Client will connect to $server_ip:$server_port"
+        
+        # Update config file
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's/^network_mode.*/network_mode client/' "$CONF_FILE"
+            sed -i '' "s/^network_mode.*/network_mode client/" "$CONF_FILE"
+            sed -i '' "s/^server_address.*/server_address $server_ip/" "$CONF_FILE"
+            sed -i '' "s/^server_port.*/server_port $server_port/" "$CONF_FILE"
         else
-            sed -i 's/^network_mode.*/network_mode client/' "$CONF_FILE"
+            sed -i "s/^network_mode.*/network_mode client/" "$CONF_FILE"
+            sed -i "s/^server_address.*/server_address $server_ip/" "$CONF_FILE"
+            sed -i "s/^server_port.*/server_port $server_port/" "$CONF_FILE"
         fi
+        
+        echo ""
+        echo "Client configured."
+        echo "Press Enter to connect to server..."
+        read
         ;;
+        
     *)
         echo "Setting mode to NORMAL..."
+        
+        # Update config file
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's/^network_mode.*/network_mode normal/' "$CONF_FILE"
+            sed -i '' "s/^network_mode.*/network_mode normal/" "$CONF_FILE"
         else
-            sed -i 's/^network_mode.*/network_mode normal/' "$CONF_FILE"
+            sed -i "s/^network_mode.*/network_mode normal/" "$CONF_FILE"
         fi
         ;;
 esac
@@ -68,16 +111,29 @@ if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
 fi
 
 # Configure
+echo "Configuring build..."
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR"
 
 # Build targets
-cmake --build "$BUILD_DIR" --target master bb_server drone input obstacles targets watchdog
+echo "Building executables..."
+cmake --build "$BUILD_DIR" --target master bb_server drone input obstacles targets watchdog network_server network_client
 
 # Sanity check
 if [[ ! -x "$BIN_DIR/master" ]]; then
     echo "Error: $BIN_DIR/master not found or not executable."
     exit 1
 fi
+
+# Show final config
+echo ""
+echo "=== Configuration ==="
+grep "^network_mode" "$CONF_FILE"
+grep "^server_address" "$CONF_FILE"
+grep "^server_port" "$CONF_FILE"
+echo "====================="
+echo ""
+echo "Starting simulation..."
+sleep 1
 
 cd "$BIN_DIR"
 exec ./master
