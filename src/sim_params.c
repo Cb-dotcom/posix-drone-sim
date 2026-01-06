@@ -45,6 +45,11 @@ static void sim_params_init_defaults(void)
     // Default mode is Normal (0)
     g_params.mode = SIM_MODE_NORMAL;
 
+    // Network defaults
+    strncpy(g_params.server_address, NET_DEFAULT_ADDRESS, sizeof(g_params.server_address) - 1);
+    g_params.server_address[sizeof(g_params.server_address) - 1] = '\0';
+    g_params.server_port = NET_DEFAULT_PORT;
+
     g_params_initialized = 1;
 }
 

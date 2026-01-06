@@ -6,6 +6,8 @@
 
 #ifndef SIM_CONST_H
 #define SIM_CONST_H
+#define NET_DEFAULT_ADDRESS "127.0.0.1"
+#define NET_DEFAULT_PORT 8888
 
 // Drone dynamics
 static const double SIM_DEFAULT_MASS    = 1.0;

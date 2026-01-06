@@ -385,10 +385,17 @@ int main(int argc, char *argv[])
 
     const SimParams *params = sim_params_get();
 
+    //debug
+    sim_log_info("bb_server: running in mode %d (0=NORMAL, 1=SERVER, 2=CLIENT)", 
+                 params->mode);
+    sim_log_info("bb_server: server_address='%s', server_port=%d",
+                 params->server_address, params->server_port);
+
+
     int env_enabled = (params->rho > 0.0 && params->eta > 0.0);
     sim_log_info("bb_server: obstacle repulsion %s", env_enabled ? "ENABLED" : "DISABLED");
 
-    // modified
+    // Parse command-line arguments based on mode
     int fd_drone_in, fd_drone_out, fd_input_in;
     int fd_obs_in = -1, fd_tgt_in = -1;
     int fd_net_drone_out = -1, fd_net_obs_in = -1;
@@ -779,9 +786,18 @@ int main(int argc, char *argv[])
                 // Read client drone as single obstacle
                 Obstacle client_obs;
                 ssize_t r = read_full(fd_net_obs_in, &client_obs, sizeof(client_obs));
+                
                 if (r == (ssize_t)sizeof(client_obs)) {
                     world.obstacles[0] = client_obs;
                     world.num_obstacles = (client_obs.active) ? 1 : 0;
+                    world.obstacles_slots = 1;  // Ensure slots is set correctly
+                    
+                    // Debug log to verify we're receiving the client drone
+                    if (client_obs.active) {
+                        sim_log_info("bb_server: received client drone at (%.2f, %.2f) radius=%.2f",
+                        client_obs.x, client_obs.y, client_obs.radius);
+                    }
+                    
                 } else if (r == 0) {
                     sim_log_info("bb_server: network obstacle pipe EOF (client disconnected)");
                     running = 0;
@@ -864,7 +880,13 @@ int main(int argc, char *argv[])
         if (running && env_enabled) {
             double fx_obs  = 0.0, fy_obs  = 0.0;
 
-            compute_obstacle_repulsion(&world, params, &fx_obs, &fy_obs);
+            // FIXED: Compute repulsion in all modes (including SERVER)
+            // Server mode: client drone is in obstacles[0]
+            // Client mode: no obstacles (server drone is just visual)
+
+            if (params->mode == SIM_MODE_NORMAL || params->mode == SIM_MODE_SERVER) {
+                compute_obstacle_repulsion(&world, params, &fx_obs, &fy_obs);
+            }
 
             double fx_vk_obs = 0.0, fy_vk_obs = 0.0;
             const char *vk_dir = "NONE";
@@ -879,6 +901,10 @@ int main(int argc, char *argv[])
                 if (rep_active) {
                     out_cmd.fx = user_cmd.fx + fx_vk_obs;
                     out_cmd.fy = user_cmd.fy + fy_vk_obs;
+
+                     // Debug log for repulsion
+                    sim_log_info("bb_server: applying repulsion force (%.2f, %.2f) from obstacle",
+                                 fx_vk_obs, fy_vk_obs);
                 }
 
                 ssize_t w = write_full(fd_drone_out, &out_cmd, sizeof(out_cmd));
@@ -905,6 +931,17 @@ int main(int argc, char *argv[])
 
         if (world.cmd.quit) {
             sim_log_info("bb_server: quit flag set, exiting");
+            
+             // Send disconnect to network process if in network mode
+            if (params->mode == SIM_MODE_SERVER || params->mode == SIM_MODE_CLIENT) {
+                // Close the network drone output pipe to signal network process to quit
+                if (fd_net_drone_out >= 0) {
+                    close(fd_net_drone_out);
+                    fd_net_drone_out = -1;
+                }
+            }
+            
+            running = 0;
             break;
         }
     }

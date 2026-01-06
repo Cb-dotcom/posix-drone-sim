@@ -78,22 +78,30 @@ int main(int argc, char *argv[])
     }
 
     // 2. [RELAY LOGIC] Check if exe.sh passed a mode number
+    int mode_to_use = SIM_MODE_NORMAL;  // default
     if (argc > 1) {
-        int mode_arg = atoi(argv[1]);
-        sim_params_set_mode(mode_arg);
-        sim_log_info("master: mode set via argument to %d", mode_arg);
+        mode_to_use = atoi(argv[1]);
+        sim_params_set_mode(mode_to_use);
+        sim_log_info("master: mode set via argument to %d", mode_to_use);
+    }
+
+    // CRITICAL FIX: Export mode as environment variable so all children inherit it
+    {
+        char mode_str[32];
+        snprintf(mode_str, sizeof(mode_str), "%d", mode_to_use);
+        setenv("SIM_MODE", mode_str, 1);
+        sim_log_info("master: exported SIM_MODE=%s to environment", mode_str);
     }
 
     const SimParams *params = sim_params_get();     // get the parameters
 
-    // ========== ADD THIS DEBUG OUTPUT ==========
+    // Debug output
     fprintf(stderr, "\n=== MASTER DEBUG INFO ===\n");
     fprintf(stderr, "Mode: %d (0=NORMAL, 1=SERVER, 2=CLIENT)\n", params->mode);
     fprintf(stderr, "Server address: %s\n", params->server_address);
     fprintf(stderr, "Server port: %d\n", params->server_port);
     fprintf(stderr, "World: %dx%d\n", params->world_width, params->world_height);
     fprintf(stderr, "=========================\n\n");
-    // ========== END DEBUG ADDITION ==========
 
 
     int pipe_drone_cmd[2];          // bb_server -> drone (CommandState)
@@ -626,14 +634,19 @@ int main(int argc, char *argv[])
     // NOTE: bb_server/input real pids are NOT our children when using konsole.
     // We must wait for the konsole processes we forked.
     int status;
+    
+    // Always wait for drone
+    sim_log_info("master: waiting for drone to exit");
     (void)waitpid(drone_pid, &status, 0);
     
     if (params->mode == SIM_MODE_NORMAL) {
+        sim_log_info("master: waiting for obstacles and targets to exit");
         (void)waitpid(obstacles_pid, &status, 0);
         (void)waitpid(targets_pid, &status, 0);
     } else {
         // Network modes: wait for network process
         if (network_pid > 0) {
+            sim_log_info("master: waiting for network process to exit");
             (void)waitpid(network_pid, &status, 0);
         }
     }

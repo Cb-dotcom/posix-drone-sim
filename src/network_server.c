@@ -142,12 +142,20 @@ int main(int argc, char *argv[])
             if (r == (ssize_t)sizeof(server_drone)) {
                 have_drone = 1;
             } else if (r == 0) {
-                sim_log_info("network_server: drone pipe closed (EOF)");
+                // EOF detected - bb_server has closed the pipe (quit signal)
+                sim_log_info("network_server: drone pipe closed (bb_server quit)");
+                running = 0;
                 break;
             } else {
                 sim_log_info("network_server: error reading from drone pipe");
+                running = 0;
                 break;
             }
+        }
+        
+        // IMPORTANT: Check if running flag was set to 0
+        if (!running) {
+            break;
         }
 
         // Send server drone position to client (if we have data)
@@ -186,8 +194,12 @@ int main(int argc, char *argv[])
         Obstacle client_obstacle;
         client_obstacle.x = client_x;
         client_obstacle.y = client_y;
-        client_obstacle.radius = 0.5;  // same as drone radius
+        client_obstacle.radius = 1;  // same as drone radius
         client_obstacle.active = 1;
+
+        // Debug log
+        sim_log_info("network_server: sending client drone as obstacle at (%.2f, %.2f)",
+                     client_x, client_y);
 
         ssize_t w = write_full(fd_obstacle_out, &client_obstacle, sizeof(client_obstacle));
         if (w != (ssize_t)sizeof(client_obstacle)) {

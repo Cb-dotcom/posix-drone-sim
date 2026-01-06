@@ -156,12 +156,19 @@ int main(int argc, char *argv[])
             if (r == (ssize_t)sizeof(client_drone)) {
                 have_drone = 1;
             } else if (r == 0) {
-                sim_log_info("network_client: drone pipe closed (EOF)");
+                sim_log_info("network_client: drone pipe closed (bb_server quit)");
+                running = 0;
                 break;
             } else {
                 sim_log_info("network_client: error reading from drone pipe");
+                running = 0;
                 break;
             }
+        }
+
+        // IMPORTANT: Check if running flag was set to 0
+        if (!running) {
+            break;
         }
 
         // Send client drone position to server (if we have data)
@@ -202,6 +209,10 @@ int main(int argc, char *argv[])
         server_drone.y = server_y;
         server_drone.vx = server_vx;
         server_drone.vy = server_vy;
+
+        // Debug log
+        sim_log_info("network_client: received server drone at (%.2f, %.2f)",
+                     server_x, server_y);
 
         w = write_full(fd_server_drone_out, &server_drone, sizeof(server_drone));
         if (w != (ssize_t)sizeof(server_drone)) {
