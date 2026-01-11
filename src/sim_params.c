@@ -1,6 +1,8 @@
 // Runtime simulation parameters implementation.
 // Loads values from a text file and falls back to sim_const.h defaults if anything goes wrong.
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,30 @@
 // Internal global parameter set
 static SimParams g_params;
 static int g_params_initialized = 0;
+
+/*
+ * Environment overrides:
+ *  - SIM_MODE: 0/1/2
+ *  - SIM_NET_ALPHA_DEG: 0/90/-90/180 (rotation to virtual bottom-left system)
+ */
+static void sim_params_apply_env_overrides(void)
+{
+    const char *m = getenv("SIM_MODE");
+    if (m && *m) {
+        int mode = (int)strtol(m, NULL, 10);
+        if (mode < 0) mode = 0;
+        if (mode > 2) mode = 2;
+        g_params.mode = (SimMode)mode;
+    }
+
+    const char *ea = getenv("SIM_NET_ALPHA_DEG");
+    if (ea && *ea) {
+        int a = (int)strtol(ea, NULL, 10);
+        if (a == 0 || a == 90 || a == -90 || a == 180) {
+            g_params.net_alpha_deg = a;
+        }
+    }
+}
 
 // Fill g_params with factory defaults from sim_const.h
 static void sim_params_init_defaults(void)
@@ -34,13 +60,13 @@ static void sim_params_init_defaults(void)
 
     // Environment population (caps)
     g_params.num_obstacles = SIM_DEFAULT_NUM_OBSTACLES;
-    g_params.num_targets   = SIM_DEFAULT_NUM_TARGETS;   
+    g_params.num_targets   = SIM_DEFAULT_NUM_TARGETS;
 
     // Environment spawn control
-    g_params.initial_obstacles       = SIM_DEFAULT_INITIAL_OBSTACLES;      
-    g_params.initial_targets         = SIM_DEFAULT_INITIAL_TARGETS;         
-    g_params.obstacle_spawn_interval = SIM_DEFAULT_OBSTACLE_SPAWN_INTERVAL; 
-    g_params.target_spawn_interval   = SIM_DEFAULT_TARGET_SPAWN_INTERVAL;   
+    g_params.initial_obstacles       = SIM_DEFAULT_INITIAL_OBSTACLES;
+    g_params.initial_targets         = SIM_DEFAULT_INITIAL_TARGETS;
+    g_params.obstacle_spawn_interval = SIM_DEFAULT_OBSTACLE_SPAWN_INTERVAL;
+    g_params.target_spawn_interval   = SIM_DEFAULT_TARGET_SPAWN_INTERVAL;
 
     // Default mode is Normal (0)
     g_params.mode = SIM_MODE_NORMAL;
@@ -49,6 +75,12 @@ static void sim_params_init_defaults(void)
     strncpy(g_params.server_address, NET_DEFAULT_ADDRESS, sizeof(g_params.server_address) - 1);
     g_params.server_address[sizeof(g_params.server_address) - 1] = '\0';
     g_params.server_port = NET_DEFAULT_PORT;
+
+    // Coordinate conversion default
+    g_params.net_alpha_deg = 0;
+
+    // Apply env overrides last (so they win over defaults)
+    sim_params_apply_env_overrides();
 
     g_params_initialized = 1;
 }
@@ -71,6 +103,7 @@ int sim_params_load(const char *path)
     fp = fopen(use_path, "r");
     if (!fp) {
         // Could not open file, keep defaults and tell caller it failed
+        sim_params_apply_env_overrides();
         return -1;
     }
 
@@ -102,11 +135,11 @@ int sim_params_load(const char *path)
 
         // Environment caps (max counts)
         } else if (strcmp(key, "num_obstacles") == 0 || strcmp(key, "obstacles") == 0) {
-            g_params.num_obstacles = (int)strtol(value, NULL, 10); // legacy name kept for compatibility
+            g_params.num_obstacles = (int)strtol(value, NULL, 10); // legacy
         } else if (strcmp(key, "num_targets") == 0 || strcmp(key, "targets") == 0) {
             g_params.num_targets = (int)strtol(value, NULL, 10);
         } else if (strcmp(key, "max_obstacles") == 0) {
-            g_params.num_obstacles = (int)strtol(value, NULL, 10); // explicit max name
+            g_params.num_obstacles = (int)strtol(value, NULL, 10);
         } else if (strcmp(key, "max_targets") == 0) {
             g_params.num_targets = (int)strtol(value, NULL, 10);
 
@@ -139,37 +172,52 @@ int sim_params_load(const char *path)
             g_params.rho = strtod(value, NULL);
         } else if (strcmp(key, "eta") == 0) {
             g_params.eta = strtod(value, NULL);
+
+        // Network settings (address/port/mode)
+        } else if (strcmp(key, "server_address") == 0) {
+            strncpy(g_params.server_address, value, sizeof(g_params.server_address) - 1);
+            g_params.server_address[sizeof(g_params.server_address) - 1] = '\0';
+        } else if (strcmp(key, "server_port") == 0) {
+            g_params.server_port = (int)strtol(value, NULL, 10);
+        } else if (strcmp(key, "net_alpha_deg") == 0 || strcmp(key, "alpha") == 0) {
+            g_params.net_alpha_deg = (int)strtol(value, NULL, 10);
         }
+
         // Unknown keys are ignored on purpose
     }
 
     fclose(fp);
 
     // Small sanity checks so obviously broken configs don't explode too hard
-    if (g_params.num_obstacles < 0) {
-        g_params.num_obstacles = 0; 
-    }
-    if (g_params.num_targets < 0) {
-        g_params.num_targets = 0;
-    }
-    if (g_params.initial_obstacles < 0) {
-        g_params.initial_obstacles = 0;
-    }
-    if (g_params.initial_targets < 0) {
-        g_params.initial_targets = 0;
-    }
-    if (g_params.initial_obstacles > g_params.num_obstacles) {
-        g_params.initial_obstacles = g_params.num_obstacles; 
-    }
-    if (g_params.initial_targets > g_params.num_targets) {
+    if (g_params.num_obstacles < 0) g_params.num_obstacles = 0;
+    if (g_params.num_targets < 0) g_params.num_targets = 0;
+
+    if (g_params.initial_obstacles < 0) g_params.initial_obstacles = 0;
+    if (g_params.initial_targets < 0) g_params.initial_targets = 0;
+
+    if (g_params.initial_obstacles > g_params.num_obstacles)
+        g_params.initial_obstacles = g_params.num_obstacles;
+    if (g_params.initial_targets > g_params.num_targets)
         g_params.initial_targets = g_params.num_targets;
-    }
-    if (g_params.obstacle_spawn_interval <= 0.0) {
-        g_params.obstacle_spawn_interval = SIM_DEFAULT_OBSTACLE_SPAWN_INTERVAL; 
-    }
-    if (g_params.target_spawn_interval <= 0.0) {
+
+    if (g_params.obstacle_spawn_interval <= 0.0)
+        g_params.obstacle_spawn_interval = SIM_DEFAULT_OBSTACLE_SPAWN_INTERVAL;
+    if (g_params.target_spawn_interval <= 0.0)
         g_params.target_spawn_interval = SIM_DEFAULT_TARGET_SPAWN_INTERVAL;
+
+    // Network sanity
+    if (g_params.server_port <= 0 || g_params.server_port > 65535)
+        g_params.server_port = NET_DEFAULT_PORT;
+
+    if (g_params.net_alpha_deg != 0 &&
+        g_params.net_alpha_deg != 90 &&
+        g_params.net_alpha_deg != -90 &&
+        g_params.net_alpha_deg != 180) {
+        g_params.net_alpha_deg = 0;
     }
+
+    // Env overrides win over file
+    sim_params_apply_env_overrides();
 
     return 0;
 }
@@ -192,18 +240,17 @@ void sim_params_get_copy(SimParams *out)
     }
 }
 
-
-// Add this function at the very end of the file
+// Keep for compatibility with your codebase
 void sim_params_set_mode(int mode)
 {
     // Safety clamp
     if (mode < 0) mode = 0; // Normal
     if (mode > 2) mode = 2; // Client
-    
+
     // Ensure params are initialized
     if (!g_params_initialized) {
         sim_params_init_defaults();
     }
-    
-    g_params.mode = mode;
+
+    g_params.mode = (SimMode)mode;
 }

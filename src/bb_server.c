@@ -362,22 +362,6 @@ int main(int argc, char *argv[])
     report_pid_if_requested(argc, argv);
     wd_client_init();
 
-    pid_t music = fork();
-    if (music == 0) {
-        int fd = open("/dev/null", O_RDWR);
-        if (fd >= 0) {
-            dup2(fd, STDIN_FILENO);
-            dup2(fd, STDOUT_FILENO);
-            dup2(fd, STDERR_FILENO);
-            if (fd > 2) close(fd);
-        }
-
-        execlp("mpg123", "mpg123", "-f", "4098", "--loop", "-1",
-               "../../bin/conf/music.mp3", (char *)NULL);
-        perror("Music!");
-        _exit(1);
-    }
-
     if (sim_params_load(NULL) != 0) {
         sim_log_info("bb_server: could not load '%s', using built-in defaults",
                      SIM_PARAMS_DEFAULT_PATH);
@@ -385,6 +369,25 @@ int main(int argc, char *argv[])
 
     const SimParams *params = sim_params_get();
 
+    // Background music ONLY in normal (standalone) mode
+    pid_t music = -1;
+    if (params->mode == SIM_MODE_NORMAL) {
+        music = fork();
+        if (music == 0) {
+            int fd = open("/dev/null", O_RDWR);
+            if (fd >= 0) {
+                dup2(fd, STDIN_FILENO);
+                dup2(fd, STDOUT_FILENO);
+                dup2(fd, STDERR_FILENO);
+                if (fd > 2) close(fd);
+            }
+
+            execlp("mpg123", "mpg123", "-f", "4098", "--loop", "-1",
+                   "../../bin/conf/music.mp3", (char *)NULL);
+            perror("Music!");
+            _exit(1);
+        }
+    }
     //debug
     sim_log_info("bb_server: running in mode %d (0=NORMAL, 1=SERVER, 2=CLIENT)", 
                  params->mode);

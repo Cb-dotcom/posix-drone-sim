@@ -46,6 +46,11 @@ typedef struct {
     SimMode mode;
     char    server_address[64];
     int     server_port;
+
+    // network coordinate conversion (rotation to virtual system)
+    // allowed: 0, 90, -90, 180  (degrees)
+    int     net_alpha_deg;
+
 } SimParams;
 
 int sim_params_load(const char *path);
