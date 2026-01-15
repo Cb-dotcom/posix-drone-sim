@@ -1,26 +1,11 @@
 /*
-    Network Client Process (Assignment 3 protocol) - NONBLOCKING, LOW-LAG
-
-    Protocol:
-      rcv "ok"     ; snd "ook"
-      rcv "size"   ; rcv w ; rcv h ; snd "sok"
-      loop:
-        rcv token:
-          "drone": rcv x ; rcv y ; snd "dok" ; forward server drone to bb_server
-          "obst" : snd x ; snd y ; rcv "pok"
-          "q"    : snd "qok" ; exit
-
-    Coordinate exchange:
-      - Convert LOCAL coords -> VIRTUAL before sending obstacle
-      - Convert VIRTUAL -> LOCAL after receiving drone
-
-      Env overrides:
-        SIM_NET_FLIP_Y = 0/1
-        SIM_NET_ALPHA  = 0,90,-90,180
-
-    argv[1] = fd_drone_pos_in       (read client's drone from bb_server)
-    argv[2] = fd_server_drone_out   (write server's drone to bb_server)
-    argv[3] = fd_window_size_out    (write window dimensions to bb_server)
+    Network Client Process - FIXED for Stef504 compatibility
+    
+    Key changes:
+    1. Size parsing: Accept "size W,H" format (single line)
+    2. Coordinate format: "X.X, Y.Y" (space after comma)
+    3. Coordinate parsing: Handle both "X.X, Y.Y" and "X.X,Y.Y"
+    4. Send obstacle as single line "X.X, Y.Y" instead of two lines
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -149,7 +134,7 @@ static int try_write_struct(int fd, const void *p, size_t n)
 {
     ssize_t w = write(fd, p, n);
     if (w == (ssize_t)n) return 1;
-    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0; // drop
+    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
     return -1;
 }
 
@@ -244,11 +229,8 @@ static int parse_double_strict(const char *s, double *out)
 typedef enum {
     C_WAIT_OK = 0,
     C_WAIT_SIZE,
-    C_WAIT_W,
-    C_WAIT_H,
     C_RUN_WAIT_TOKEN,
-    C_RUN_WAIT_DRONE_X,
-    C_RUN_WAIT_DRONE_Y,
+    C_RUN_WAIT_DRONE_COORDS,
     C_RUN_WAIT_POK,
     C_DONE
 } CState;
@@ -302,7 +284,6 @@ int main(int argc, char *argv[])
 
     int world_w = 0, world_h = 0;
 
-    // Coordinate config (env)
     const int flip_y    = get_env_i("SIM_NET_FLIP_Y", 0);
     const int alpha_deg = norm_alpha_deg(get_env_i("SIM_NET_ALPHA", 0));
     sim_log_info("network_client: coord cfg flip_y=%d alpha=%d", flip_y, alpha_deg);
@@ -313,7 +294,6 @@ int main(int argc, char *argv[])
     double tmp_x_v = 0.0, tmp_y_v = 0.0;
 
     while (running && st != C_DONE) {
-        // Always drain client's drone from bb_server
         int dr = drain_latest_drone(fd_drone_in, &latest_client, &have_client);
         if (dr == 1) { sim_log_info("network_client: bb_server closed drone pipe"); break; }
         if (dr < 0)  { sim_log_info("network_client: error reading drone pipe"); break; }
@@ -357,27 +337,24 @@ int main(int argc, char *argv[])
                 st = C_WAIT_SIZE;
             }
             else if (st == C_WAIT_SIZE) {
-                if (strcmp(line, NET_TOK_SIZE) != 0) { st = C_DONE; break; }
-                st = C_WAIT_W;
-            }
-            else if (st == C_WAIT_W) {
-                world_w = (int)strtol(line, NULL, 10);
-                st = C_WAIT_H;
-            }
-            else if (st == C_WAIT_H) {
-                world_h = (int)strtol(line, NULL, 10);
+                // FIXED: Parse "size W,H" format (single line with comma)
+                if (sscanf(line, "size %d,%d", &world_w, &world_h) == 2) {
+                    (void)sq_append_line(&out, NET_TOK_SOK);
 
-                (void)sq_append_line(&out, NET_TOK_SOK);
+                    WindowDimensions dims = { world_w, world_h };
+                    if (write_full(fd_window_size_out, &dims, sizeof(dims)) != (ssize_t)sizeof(dims)) {
+                        sim_log_info("network_client: failed to forward window size to bb_server");
+                        st = C_DONE;
+                        break;
+                    }
 
-                WindowDimensions dims = { world_w, world_h };
-                if (write_full(fd_window_size_out, &dims, sizeof(dims)) != (ssize_t)sizeof(dims)) {
-                    sim_log_info("network_client: failed to forward window size to bb_server");
+                    sim_log_info("network_client: handshake complete, size=%dx%d", world_w, world_h);
+                    st = C_RUN_WAIT_TOKEN;
+                } else {
+                    sim_log_info("network_client: invalid size format: '%s'", line);
                     st = C_DONE;
                     break;
                 }
-
-                sim_log_info("network_client: handshake complete, size=%dx%d", world_w, world_h);
-                st = C_RUN_WAIT_TOKEN;
             }
             else if (st == C_RUN_WAIT_TOKEN) {
                 if (strcmp(line, NET_TOK_Q) == 0) {
@@ -386,11 +363,11 @@ int main(int argc, char *argv[])
                     break;
                 }
                 if (strcmp(line, NET_TOK_DRONE) == 0) {
-                    st = C_RUN_WAIT_DRONE_X;
+                    st = C_RUN_WAIT_DRONE_COORDS;
                     continue;
                 }
                 if (strcmp(line, NET_TOK_OBST) == 0) {
-                    // Send OUR obstacle (local->virtual) then wait POK
+                    // FIXED: Send obstacle as single line "X.X, Y.Y"
                     double xl = have_client ? latest_client.x : 0.0;
                     double yl = have_client ? latest_client.y : 0.0;
 
@@ -398,8 +375,8 @@ int main(int argc, char *argv[])
                     coord_local_to_virtual(xl, yl, world_w, world_h, flip_y, alpha_deg, &xv, &yv);
 
                     char b[64];
-                    snprintf(b, sizeof(b), "%.6f", xv); (void)sq_append_line(&out, b);
-                    snprintf(b, sizeof(b), "%.6f", yv); (void)sq_append_line(&out, b);
+                    snprintf(b, sizeof(b), "%.1f, %.1f", xv, yv);
+                    (void)sq_append_line(&out, b);
 
                     st = C_RUN_WAIT_POK;
                     continue;
@@ -409,27 +386,28 @@ int main(int argc, char *argv[])
                 st = C_DONE;
                 break;
             }
-            else if (st == C_RUN_WAIT_DRONE_X) {
-                if (parse_double_strict(line, &tmp_x_v) != 0) { st = C_DONE; break; }
-                st = C_RUN_WAIT_DRONE_Y;
-            }
-            else if (st == C_RUN_WAIT_DRONE_Y) {
-                if (parse_double_strict(line, &tmp_y_v) != 0) { st = C_DONE; break; }
+            else if (st == C_RUN_WAIT_DRONE_COORDS) {
+                // FIXED: Parse both "X.X, Y.Y" and "X.X,Y.Y" formats
+                if (sscanf(line, "%lf, %lf", &tmp_x_v, &tmp_y_v) == 2 ||
+                    sscanf(line, "%lf,%lf", &tmp_x_v, &tmp_y_v) == 2) {
+                    (void)sq_append_line(&out, NET_TOK_DOK);
 
-                (void)sq_append_line(&out, NET_TOK_DOK);
+                    double xl, yl;
+                    coord_virtual_to_local(tmp_x_v, tmp_y_v, world_w, world_h, flip_y, alpha_deg, &xl, &yl);
 
-                // Convert VIRTUAL -> LOCAL before forwarding to bb_server
-                double xl, yl;
-                coord_virtual_to_local(tmp_x_v, tmp_y_v, world_w, world_h, flip_y, alpha_deg, &xl, &yl);
+                    DroneState sd = {0};
+                    sd.x = xl;
+                    sd.y = yl;
 
-                DroneState sd = {0};
-                sd.x = xl;
-                sd.y = yl;
+                    int wr = try_write_struct(fd_server_drone_out, &sd, sizeof(sd));
+                    if (wr < 0) { st = C_DONE; break; }
 
-                int wr = try_write_struct(fd_server_drone_out, &sd, sizeof(sd));
-                if (wr < 0) { st = C_DONE; break; }
-
-                st = C_RUN_WAIT_TOKEN;
+                    st = C_RUN_WAIT_TOKEN;
+                } else {
+                    sim_log_info("network_client: invalid drone coordinate format: '%s'", line);
+                    st = C_DONE;
+                    break;
+                }
             }
             else if (st == C_RUN_WAIT_POK) {
                 if (strcmp(line, NET_TOK_POK) != 0) { st = C_DONE; break; }

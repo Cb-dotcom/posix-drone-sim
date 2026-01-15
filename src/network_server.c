@@ -1,32 +1,10 @@
 /*
-    Network Server Process (Assignment 3 protocol) - NONBLOCKING, LOW-LAG
-
-    Startup handshake:
-      snd "ok" ; rcv "ook"
-      snd "size" ; snd w ; snd h ; rcv "sok"
-
-    Main loop:
-      snd "drone" ; snd x ; snd y ; rcv "dok"
-      snd "obst"  ; rcv x ; rcv y ; snd "pok"
-      forward (x,y) as obstacle to bb_server
-
-    Shutdown:
-      snd "q" ; rcv "qok" (best effort)
-
-    Key fix:
-      - socket nonblocking + state machine
-      - ALWAYS drain bb_server pipe to avoid pipe fill -> bb_server blocking -> UI lag
-
-    Coordinate exchange:
-      - Convert LOCAL coords -> VIRTUAL (bottom-left) before sending
-      - Convert VIRTUAL -> LOCAL after receiving
-
-      Env overrides:
-        SIM_NET_FLIP_Y = 0/1
-        SIM_NET_ALPHA  = 0,90,-90,180
-
-    argv[1] = fd_drone_pos_in   (read server's drone from bb_server)
-    argv[2] = fd_obstacle_out   (write client drone as obstacle to bb_server)
+    Network Server Process - FIXED for Stef504 compatibility
+    
+    Key changes:
+    1. Size format: "size W,H" (single line with comma)
+    2. Coordinate format: "X.X, Y.Y" (space after comma)
+    3. Precision reduced to %.1f to match Stef504
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -63,26 +41,20 @@ static int get_env_i(const char *name, int defv)
 
 static int norm_alpha_deg(int a)
 {
-    // normalize to one of {0, 90, -90, 180}
     if (a == 0 || a == 90 || a == -90 || a == 180) return a;
-    // allow 270 as -90
     if (a == 270) return -90;
     if (a == -270) return 90;
-    // fallback
     return 0;
 }
 
-// local -> virtual (bottom-left) then optional rotation mapping into [0..W]x[0..H]
 static void coord_local_to_virtual(double xl, double yl,
                                    int W, int H,
                                    int flip_y, int alpha_deg,
                                    double *xv, double *yv)
 {
-    // 1) optional flip_y: top-left (y down) -> bottom-left (y up)
     double x = xl;
     double y = flip_y ? ((double)H - yl) : yl;
 
-    // 2) rotate around origin by alpha
     alpha_deg = norm_alpha_deg(alpha_deg);
     double xr = x, yr = y;
 
@@ -96,8 +68,6 @@ static void coord_local_to_virtual(double xl, double yl,
         xr = y;  yr = -x;
     }
 
-    // 3) translate to keep positive in world box (simple canonical shifts)
-    // assumes original x,y were in [0..W],[0..H] in the (already virtual-y-up) frame
     if (alpha_deg == 0) {
         *xv = xr;
         *yv = yr;
@@ -107,13 +77,12 @@ static void coord_local_to_virtual(double xl, double yl,
     } else if (alpha_deg == 90) {
         *xv = xr + W;
         *yv = yr;
-    } else { // -90
+    } else {
         *xv = xr;
         *yv = yr + H;
     }
 }
 
-// virtual -> local (undo translate, undo rotation, then optional flip_y back)
 static void coord_virtual_to_local(double xv, double yv,
                                    int W, int H,
                                    int flip_y, int alpha_deg,
@@ -121,7 +90,6 @@ static void coord_virtual_to_local(double xv, double yv,
 {
     alpha_deg = norm_alpha_deg(alpha_deg);
 
-    // 1) undo translation
     double xt = xv, yt = yv;
 
     if (alpha_deg == 0) {
@@ -130,11 +98,10 @@ static void coord_virtual_to_local(double xv, double yv,
         xt = xv - W;  yt = yv - H;
     } else if (alpha_deg == 90) {
         xt = xv - W;  yt = yv;
-    } else { // -90
+    } else {
         xt = xv;      yt = yv - H;
     }
 
-    // 2) undo rotation
     double x = xt, y = yt;
 
     if (alpha_deg == 0) {
@@ -143,11 +110,10 @@ static void coord_virtual_to_local(double xv, double yv,
         x = -xt; y = -yt;
     } else if (alpha_deg == 90) {
         x = yt;  y = -xt;
-    } else { // -90
+    } else {
         x = -yt; y = xt;
     }
 
-    // 3) optional flip_y back to top-left system
     double yl_local = flip_y ? ((double)H - y) : y;
 
     *xl = x;
@@ -174,7 +140,7 @@ static int drain_latest_drone(int fd, DroneState *latest, int *have_latest)
             *have_latest = 1;
             continue;
         }
-        if (r == 0) return 1; // pipe closed
+        if (r == 0) return 1;
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
         return -1;
     }
@@ -184,11 +150,10 @@ static int try_write_struct(int fd, const void *p, size_t n)
 {
     ssize_t w = write(fd, p, n);
     if (w == (ssize_t)n) return 1;
-    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0; // drop
+    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
     return -1;
 }
 
-/* line receiver accumulator (non-blocking) */
 typedef struct {
     char   buf[2048];
     size_t len;
@@ -203,7 +168,7 @@ static int acc_recv_lines(int sockfd, LineAcc *acc)
             if (acc->len == sizeof(acc->buf)) return 0;
             continue;
         }
-        if (r == 0) return 1; // EOF
+        if (r == 0) return 1;
         if (errno == EINTR) continue;
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
         return -1;
@@ -230,7 +195,6 @@ static int acc_pop_line(LineAcc *acc, char *out, size_t cap)
     return 0;
 }
 
-/* nonblocking send queue */
 typedef struct {
     char   buf[4096];
     size_t off;
@@ -319,7 +283,6 @@ int main(int argc, char *argv[])
     const int W = params->world_width;
     const int H = params->world_height;
 
-    // Coordinate config (env)
     const int flip_y   = get_env_i("SIM_NET_FLIP_Y", 0);
     const int alpha_deg = norm_alpha_deg(get_env_i("SIM_NET_ALPHA", 0));
 
@@ -359,15 +322,14 @@ int main(int argc, char *argv[])
     DroneState latest_server = {0};
     int have_server = 0;
 
-    double obst_x_v = 0.0, obst_y_v = 0.0; // received in VIRTUAL
-    double obst_x_l = 0.0, obst_y_l = 0.0; // converted to LOCAL
+    double obst_x_v = 0.0, obst_y_v = 0.0;
+    double obst_x_l = 0.0, obst_y_l = 0.0;
 
-    // start handshake: send ok immediately
+    // FIXED: Start with ok (compatible with Stef504)
     (void)sq_append_line(&out, NET_TOK_OK);
     SState st = S_WAIT_OOK;
 
     while (st != S_DONE) {
-        // Always drain latest server drone
         int dr = drain_latest_drone(fd_drone_in, &latest_server, &have_server);
         if (dr == 1) {
             sim_log_info("network_server: bb_server closed drone pipe -> shutdown");
@@ -377,7 +339,6 @@ int main(int argc, char *argv[])
             running = 0;
         }
 
-        // If bb_server wants quit, initiate q/qok (best effort)
         if (!running && st != S_WAIT_QOK && st != S_DONE) {
             sq_clear(&out);
             (void)sq_append_line(&out, NET_TOK_Q);
@@ -421,13 +382,12 @@ int main(int argc, char *argv[])
             }
         }
 
-        // enqueue next send step when queue empty
         if (out.len == 0) {
             if (st == S_SEND_SIZE) {
+                // FIXED: Send as "size W,H" (single line, matches Stef504)
                 char b[64];
-                (void)sq_append_line(&out, NET_TOK_SIZE);
-                snprintf(b, sizeof(b), "%d", W); (void)sq_append_line(&out, b);
-                snprintf(b, sizeof(b), "%d", H); (void)sq_append_line(&out, b);
+                snprintf(b, sizeof(b), "size %d,%d", W, H);
+                (void)sq_append_line(&out, b);
                 st = S_WAIT_SOK;
             } else if (st == S_SEND_DRONE) {
                 char b[64];
@@ -439,8 +399,9 @@ int main(int argc, char *argv[])
                 coord_local_to_virtual(xl, yl, W, H, flip_y, alpha_deg, &xv, &yv);
 
                 (void)sq_append_line(&out, NET_TOK_DRONE);
-                snprintf(b, sizeof(b), "%.6f", xv); (void)sq_append_line(&out, b);
-                snprintf(b, sizeof(b), "%.6f", yv); (void)sq_append_line(&out, b);
+                // FIXED: Use "%.1f, %.1f" format (space after comma, matches Stef504)
+                snprintf(b, sizeof(b), "%.1f, %.1f", xv, yv);
+                (void)sq_append_line(&out, b);
 
                 st = S_WAIT_DOK;
             } else if (st == S_SEND_OBST) {
@@ -452,7 +413,6 @@ int main(int argc, char *argv[])
             }
         }
 
-        // consume complete lines
         char line[256];
         while (acc_pop_line(&in, line, sizeof(line))) {
             if (st == S_WAIT_OOK) {
@@ -474,13 +434,31 @@ int main(int argc, char *argv[])
                     st = S_DONE;
                     break;
                 }
-                if (parse_double_strict(line, &obst_x_v) != 0) { st = S_DONE; break; }
-                st = S_WAIT_OBST_Y;
+                // FIXED: Try both formats (with and without space after comma)
+                if (sscanf(line, "%lf, %lf", &obst_x_v, &obst_y_v) == 2 ||
+                    sscanf(line, "%lf,%lf", &obst_x_v, &obst_y_v) == 2) {
+                    // Successfully parsed both coordinates from single line
+                    coord_virtual_to_local(obst_x_v, obst_y_v, W, H, flip_y, alpha_deg, &obst_x_l, &obst_y_l);
+
+                    Obstacle obs;
+                    obs.x = obst_x_l;
+                    obs.y = obst_y_l;
+                    obs.radius = 1.0;
+                    obs.active = 1;
+
+                    int wr = try_write_struct(fd_obstacle_out, &obs, sizeof(obs));
+                    if (wr < 0) { st = S_DONE; break; }
+
+                    st = S_SEND_POK;
+                } else {
+                    // Try parsing as single X value (original behavior)
+                    if (parse_double_strict(line, &obst_x_v) != 0) { st = S_DONE; break; }
+                    st = S_WAIT_OBST_Y;
+                }
             }
             else if (st == S_WAIT_OBST_Y) {
                 if (parse_double_strict(line, &obst_y_v) != 0) { st = S_DONE; break; }
 
-                // Convert VIRTUAL -> LOCAL before writing to bb_server
                 coord_virtual_to_local(obst_x_v, obst_y_v, W, H, flip_y, alpha_deg, &obst_x_l, &obst_y_l);
 
                 Obstacle obs;
