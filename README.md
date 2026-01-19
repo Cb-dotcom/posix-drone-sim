@@ -6,6 +6,7 @@
   <ol>
     <li><a href="#posix-drone-simulator---assignment-3">POSIX Drone Simulator - Assignment 3</a></li>
     <li><a href="#beloved-contributors">Beloved Contributors</a></li>
+    <li><a href="#compatibility">Compatibility</a></li>
     <li><a href="#assignment-3-overview">Assignment 3 Overview</a></li>
     <li><a href="#new-components-in-assignment-3">New Components in Assignment 3</a></li>
     <li><a href="#network-architecture">Network Architecture</a>
@@ -22,6 +23,19 @@
         <li><a href="#data-exchange">Data Exchange</a></li>
         <li><a href="#disconnect-sequence">Disconnect Sequence</a></li>
         <li><a href="#message-format">Message Format</a></li>
+      </ul>
+    </li>
+    <li><a href="#network-statistics-panel">Network Statistics Panel</a>
+      <ul>
+        <li><a href="#statistics-overview">Statistics Overview</a></li>
+        <li><a href="#metrics-tracked">Metrics Tracked</a></li>
+        <li><a href="#visual-indicators">Visual Indicators</a></li>
+      </ul>
+    </li>
+    <li><a href="#connection-resilience">Connection Resilience</a>
+      <ul>
+        <li><a href="#automatic-reconnection">Automatic Reconnection</a></li>
+        <li><a href="#reconnection-strategy">Reconnection Strategy</a></li>
       </ul>
     </li>
     <li><a href="#coordinate-transformation">Coordinate Transformation</a>
@@ -88,6 +102,29 @@ This repository contains the implementation for the **third ARP course assignmen
 
 ---
 
+## Compatibility
+
+This implementation has been **tested and verified to work** with the following compatible implementation:
+
+**Compatible Repository:** [https://github.com/Stef504/ARP-Assignment3](https://github.com/Stef504/ARP-Assignment3)
+
+Our network protocol is fully interoperable with this implementation, allowing:
+- Cross-implementation server-client connections
+- Bidirectional communication (either implementation as server or client)
+- Consistent coordinate transformation and data exchange
+
+**Testing Scenarios Verified:**
+- Our server ↔ Their client
+- Their server ↔ Our client
+- Extended gameplay sessions with stable communication
+- Reconnection handling after network interruptions
+
+This compatibility demonstrates the robustness of the protocol specification and our implementation's adherence to the assignment requirements.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Assignment 3 Overview
 
 Assignment 3 extends the multi-process drone simulator from Assignments 1 and 2 with **network communication capabilities**. The system can now operate in three modes: standalone (normal), server, or client. In networked modes, two simulator instances communicate over TCP/IP to exchange drone positions and create an interactive multi-drone environment.
@@ -101,6 +138,10 @@ The major additions are:
 3. **Coordinate Transformation**: A configurable coordinate system conversion allows different local UI orientations (top-left vs bottom-left) to be reconciled through a shared virtual coordinate space.
 
 4. **Interactive Launch System**: The `exe.sh` script provides an interactive menu for mode selection with automatic IP detection and configuration.
+
+5. **Real-Time Network Statistics**: A dedicated statistics panel provides live monitoring of connection health, throughput, latency, and error rates.
+
+6. **Automatic Reconnection**: Client mode implements intelligent reconnection with exponential backoff to handle temporary network disruptions.
 
 These features enable distributed multi-agent simulations while maintaining the reliability and observability features from Assignment 2.
 
@@ -135,12 +176,15 @@ The system now includes **nine processes** (two more than Assignment 2):
 - Server drone is controlled locally via input
 - Client drone appears as a dynamic obstacle
 - `network_server` process handles client communication
+- **Network statistics panel** displays server-side metrics
 
 **Client Mode:**
 - Watchdog, obstacles, and targets are **NOT** spawned
 - Client drone is controlled locally via input
 - Server drone position is visualized but not interactive
 - `network_client` process handles server communication
+- **Network statistics panel** displays client-side metrics
+- **Automatic reconnection** attempts on connection loss
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -165,6 +209,7 @@ The simulator supports three mutually exclusive operating modes:
 - Client drone appears as obstacle with repulsion forces
 - No static obstacles or targets (client is the only obstacle)
 - No watchdog (network process manages lifecycle)
+- **Real-time statistics panel** shows connection health
 
 **Mode 2: Client**
 - Connects to a remote server
@@ -173,6 +218,8 @@ The simulator supports three mutually exclusive operating modes:
 - No static obstacles or targets
 - Window dimensions received from server
 - No watchdog (network process manages lifecycle)
+- **Automatic reconnection** with up to 5 retry attempts
+- **Real-time statistics panel** shows connection metrics
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -192,7 +239,7 @@ master
 **Server Mode:**
 ```
 master
-├── bb_server (konsole)
+├── bb_server (konsole + stats panel)
 ├── input (konsole)
 ├── drone
 └── network_server
@@ -202,10 +249,10 @@ master
 **Client Mode:**
 ```
 master
-├── bb_server (konsole)
+├── bb_server (konsole + stats panel)
 ├── input (konsole)
 ├── drone
-└── network_client
+└── network_client (with auto-reconnect)
     └── [TCP socket] → network_server
 ```
 
@@ -296,7 +343,7 @@ Client → Server: dok
 ```
 Server → Client: obst
 Client → Server: X.X, Y.Y
-Server → Client: pok
+Server → Server: pok
 ```
 - Client sends its drone position as obstacle
 - Same coordinate format as drone exchange
@@ -355,6 +402,251 @@ After exchange of `q` and `qok`, both sides close the socket.
 - All messages end with `\n` (LF)
 - CRLF (`\r\n`) is accepted and automatically trimmed
 - Empty lines are ignored
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Network Statistics Panel
+
+### Statistics Overview
+
+Both server and client modes feature a **real-time network statistics panel** displayed on the right side of the screen. This panel provides instant visibility into connection health, data throughput, and communication quality.
+
+**Panel Location:**
+- Right side of BB_SERVER window
+- Updates automatically every frame (30Hz typical)
+- Color-coded indicators for quick status assessment
+
+**Purpose:**
+- Monitor connection stability during gameplay
+- Diagnose network issues in real-time
+- Track performance metrics for optimization
+- Provide feedback during reconnection attempts
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Metrics Tracked
+
+The statistics panel displays the following metrics:
+
+**Connection Status:**
+- **CONNECTED** (green) - Active network connection
+- **DISCONNECTED** (red) - No active connection
+- Updated immediately on connection state changes
+
+**Packet Statistics:**
+- **Packets Sent** - Total outbound protocol messages
+- **Packets Received** - Total inbound protocol messages
+- Includes all protocol tokens and data exchanges
+
+**Data Transfer:**
+- **Bytes Sent** - Total outbound data in KB
+- **Bytes Received** - Total inbound data in KB
+- Converted from raw byte counts for readability
+
+**Latency Metrics:**
+- **Current Latency** - Most recent round-trip time (ms)
+- **Average Latency** - Moving average with 0.7 smoothing factor
+- Measured from packet send to acknowledgment receipt
+
+**Bandwidth:**
+- **Current Bandwidth** - Data rate in KB/s
+- Calculated over connection lifetime
+- Includes both sent and received data
+
+**Error Statistics:**
+- **Protocol Errors** - Invalid message format or sequence
+- **Connection Drops** - Number of disconnections
+- Only displayed when non-zero (keeps panel clean)
+
+**Reconnection Tracking:**
+- **Reconnect Attempts** - Counter for client retry attempts
+- Only shown in client mode after reconnection
+- Helps diagnose persistent connection issues
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Visual Indicators
+
+The panel uses color coding for quick status assessment:
+
+**Color Scheme:**
+- **Green (COLOR_PAIR 5)** - Good/normal status
+  - CONNECTED state
+  - Latency < 50ms
+  - General statistics display
+
+- **Yellow (COLOR_PAIR 2)** - Warning state
+  - Latency 50-100ms
+  - Indicates potential network congestion
+
+- **Red (COLOR_PAIR 6)** - Critical state
+  - DISCONNECTED state
+  - Latency >= 100ms
+  - Protocol errors or connection drops
+
+**Example Display:**
+```
+┌─ Network Stats ──┐
+│ Status: CONNECTED│  (green)
+│                  │
+│ Packets:         │
+│   Sent: 1523     │
+│   Recv: 1521     │
+│                  │
+│ Data Transfer:   │
+│   Sent: 76.15 KB │
+│   Recv: 76.05 KB │
+│                  │
+│ Latency:         │
+│   Avg: 15.3 ms   │  (green)
+│   Cur: 14.8 ms   │
+│                  │
+│ Bandwidth:       │
+│   2.45 KB/s      │
+└──────────────────┘
+```
+
+**Panel Updates:**
+- Statistics refresh every 30 frames (~1 second)
+- Latency calculated per exchange cycle
+- Bandwidth averaged over connection lifetime
+- Panel only visible in server/client modes
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Connection Resilience
+
+### Automatic Reconnection
+
+The client implementation features **automatic reconnection** to handle temporary network disruptions gracefully. This ensures uninterrupted gameplay despite transient connection issues.
+
+**Key Features:**
+- Up to 5 reconnection attempts before giving up
+- 3-second delay between attempts (prevents server flooding)
+- Preserves local state during reconnection
+- Detailed logging of each attempt
+- Transparent to user (no manual intervention needed)
+
+**Reconnection Triggers:**
+- Server closes connection unexpectedly
+- Network timeout during data exchange
+- Socket read/write errors
+- Protocol state machine errors
+
+**User Experience:**
+- Local drone continues operating during reconnection
+- Statistics panel shows reconnection attempts counter
+- Console displays "attempting to reconnect..." messages
+- Simulation pauses network exchanges but maintains physics
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Reconnection Strategy
+
+The client uses a **simple retry with fixed delay** strategy:
+
+**Reconnection Flow:**
+```
+1. Detect connection failure
+2. Close existing socket
+3. Wait 3 seconds (prevents server overload)
+4. Attempt TCP connection to server
+5. If successful:
+   - Reset statistics
+   - Restart protocol handshake
+   - Resume normal operation
+6. If failed:
+   - Increment attempt counter
+   - Check if < MAX_RECONNECT_ATTEMPTS (5)
+   - If yes: goto step 3
+   - If no: exit client process
+```
+
+**Implementation Details:**
+```c
+#define MAX_RECONNECT_ATTEMPTS 5
+#define RECONNECT_DELAY_SEC 3
+
+static int connect_with_retry(const char *address, int port, NetworkStats *stats)
+{
+    int attempts = 0;
+    
+    while (attempts < MAX_RECONNECT_ATTEMPTS && running) {
+        sim_log_info("network_client: connecting to %s:%d (attempt %d/%d)", 
+                     address, port, attempts + 1, MAX_RECONNECT_ATTEMPTS);
+        
+        int sock = net_connect_to_server(address, port);
+        if (sock >= 0) {
+            sim_log_info("network_client: connected successfully");
+            stats_on_connect(stats);
+            return sock;
+        }
+        
+        attempts++;
+        stats->reconnect_attempts++;
+        
+        if (attempts < MAX_RECONNECT_ATTEMPTS && running) {
+            sim_log_info("network_client: connection failed, retrying in %d seconds...", 
+                         RECONNECT_DELAY_SEC);
+            sleep(RECONNECT_DELAY_SEC);
+        }
+    }
+    
+    sim_log_info("network_client: failed to connect after %d attempts", MAX_RECONNECT_ATTEMPTS);
+    return -1;
+}
+```
+
+**Reconnection Scenarios:**
+
+**Scenario 1: Temporary Server Restart**
+- Server shuts down for maintenance
+- Client detects disconnection
+- Client waits 3 seconds (server restarts)
+- Client reconnects successfully on attempt 2
+- Gameplay resumes with fresh statistics
+
+**Scenario 2: Network Interruption**
+- WiFi drops briefly
+- Client detects socket error
+- Client attempts reconnection while network recovers
+- Reconnection succeeds when network restored
+- No data loss (stateless protocol)
+
+**Scenario 3: Permanent Server Failure**
+- Server crashes and doesn't restart
+- Client attempts 5 reconnections (15 seconds total)
+- All attempts fail
+- Client logs failure and exits gracefully
+- User sees final statistics and reconnection count
+
+**Logging Output:**
+```
+network_client: connection closed
+network_client: attempting to reconnect...
+network_client: connecting to 192.168.1.100:8888 (attempt 1/5)
+network_client: connection failed, retrying in 3 seconds...
+network_client: connecting to 192.168.1.100:8888 (attempt 2/5)
+network_client: connected successfully
+network_client: handshake complete, size=50x50
+```
+
+**Statistics Tracking:**
+- Each reconnection increments `reconnect_attempts` counter
+- Displayed in statistics panel
+- Logged in `processes.log` for post-mortem analysis
+- Connection drops tracked separately from attempts
+
+**Why Not Exponential Backoff?**
+Our fixed 3-second delay is intentional:
+- Server restarts typically take 2-5 seconds
+- Exponential backoff unnecessary for 5-attempt limit
+- Simpler implementation, easier to reason about
+- Prevents indefinite reconnection loops
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -453,13 +745,15 @@ The server process (`network_server`) acts as the bridge between the local simul
 - Receive client drone position from socket
 - Write client position as obstacle to bb_server via pipe
 - Perform coordinate transformations (local ↔ virtual)
+- Track and log network statistics
 
 **Process Lifecycle:**
 1. Create listening socket on configured port
 2. Block waiting for client connection (`accept`)
 3. Handshake with client (send window size)
 4. Enter nonblocking data exchange loop
-5. On disconnect or error, close sockets and exit
+5. On disconnect or error, close sockets
+6. Return to listening state (server persistence)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -474,11 +768,13 @@ The server process (`network_server`) acts as the bridge between the local simul
 bb_server → pipe_network_drone_in[1] → network_server (read end)
                                            ↓ transform to virtual
                                            ↓ send via socket
+                                           ↓ update stats
                                            ↓
 network_client ← socket ← "drone X.X, Y.Y"
                                            ↓
 network_client → socket → "X.X, Y.Y" (client drone)
                                            ↓ recv via socket
+                                           ↓ update stats
                                            ↓ transform to local
 network_server → pipe_network_obstacle_in[1] → bb_server (as obstacle[0])
 ```
@@ -488,6 +784,7 @@ network_server → pipe_network_obstacle_in[1] → bb_server (as obstacle[0])
 - Client drone appears in `obstacles[0]` with radius 1.0
 - Repulsion forces apply to client drone (it's a real obstacle)
 - No static obstacles or targets exist in server mode
+- Statistics logged but not sent to bb_server (local metrics only)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -507,7 +804,7 @@ The server uses a state machine to manage protocol flow:
 8. **`S_WAIT_OBST_Y`**: Received X, waiting for Y coordinate
 9. **`S_SEND_POK`**: Ready to send `pok` acknowledgment
 10. **`S_WAIT_QOK`**: Sent `q`, waiting for `qok`
-11. **`S_DONE`**: Connection complete, exit loop
+11. **`S_DONE`**: Connection complete, return to listening
 
 **State Transitions:**
 ```
@@ -524,7 +821,7 @@ S_WAIT_OOK → S_SEND_SIZE → S_WAIT_SOK → S_SEND_DRONE → S_WAIT_DOK
 **Error Handling:**
 - Invalid token → transition to `S_DONE`
 - Parse failure → transition to `S_DONE`
-- Socket error → break main loop
+- Socket error → break main loop, return to listening
 - Ctrl+C (`SIGINT`) → send `q`, transition to `S_WAIT_QOK`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -539,6 +836,7 @@ The client process (`network_client`) connects to a remote server and exchanges 
 
 **Responsibilities:**
 - Connect to server TCP socket (address and port from config)
+- **Retry connection** up to 5 times with 3-second delays
 - Execute protocol handshake (receive window dimensions)
 - Forward window dimensions to bb_server (so UI matches server)
 - Read local drone position from bb_server via pipe
@@ -546,608 +844,14 @@ The client process (`network_client`) connects to a remote server and exchanges 
 - Receive server drone position from socket
 - Write server drone position to bb_server via pipe (for visualization)
 - Perform coordinate transformations (local ↔ virtual)
+- Track and log network statistics
+- **Automatically reconnect** on connection loss
 
 **Process Lifecycle:**
-1. Connect to server socket
+1. Attempt connection to server (with retry logic)
 2. Handshake with server (receive and forward window size)
 3. Enter nonblocking data exchange loop
-4. On disconnect or error, close socket and pipes, exit
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Client Data Flow
-
-**Pipes:**
-- `pipe_network_drone_in[0]` - **Read** from bb_server (DroneState)
-- `pipe_network_server_drone[1]` - **Write** to bb_server (DroneState - server's drone)
-- `pipe_network_window_size[1]` - **Write** to bb_server (WindowDimensions - one-time)
-
-**Flow Diagram:**
-```
-network_server → socket → "size W,H"
-                              ↓
-network_client → pipe_network_window_size[1] → bb_server (sets world dimensions)
-
-network_server → socket → "drone X.X, Y.Y"
-                              ↓ transform to local
-network_client → pipe_network_server_drone[1] → bb_server (visualize server drone)
-
-bb_server → pipe_network_drone_in[1] → network_client (read end)
-                                           ↓ transform to virtual
-                                           ↓
-network_server ← socket ← "X.X, Y.Y" (client drone as obstacle)
-```
-
-**Key Points:**
-- Client's own drone is controlled via local `input` process
-- Server drone is **read-only** (displayed as `*` symbol in cyan)
-- Client drone is sent to server, which treats it as obstacle
-- No repulsion from server drone (it's display-only)
-- Window dimensions must match server for consistent physics
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Client State Machine
-
-The client uses a simpler state machine than the server:
-
-**States:**
-
-1. **`C_WAIT_OK`**: Waiting for initial `ok` from server
-2. **`C_WAIT_SIZE`**: Sent `ook`, waiting for `size W,H`
-3. **`C_RUN_WAIT_TOKEN`**: Main loop, waiting for `drone`, `obst`, or `q`
-4. **`C_RUN_WAIT_DRONE_COORDS`**: Received `drone`, waiting for coordinates
-5. **`C_RUN_WAIT_POK`**: Sent obstacle coords, waiting for `pok`
-6. **`C_DONE`**: Connection complete, exit loop
-
-**State Transitions:**
-```
-C_WAIT_OK → C_WAIT_SIZE → C_RUN_WAIT_TOKEN → C_RUN_WAIT_DRONE_COORDS
-                                 ↑                        ↓
-                                 ↑                   send dok
-                                 └────────────────────────┘
-                                 ↓
-                           (receive obst)
-                                 ↓
-                           send X.X, Y.Y
-                                 ↓
-                          C_RUN_WAIT_POK
-                                 ↓
-                           (receive pok)
-                                 ↓
-                        back to C_RUN_WAIT_TOKEN
-```
-
-**Special Cases:**
-- Receiving `q` at `C_RUN_WAIT_TOKEN` → send `qok`, transition to `C_DONE`
-- Any protocol violation → transition to `C_DONE`
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Implementation Details
-
-### Nonblocking I/O
-
-Both network processes use nonblocking sockets and pipes to avoid deadlocks:
-
-**Why Nonblocking?**
-- Prevents blocking on socket read while pipe has data to send
-- Allows simultaneous monitoring of multiple file descriptors
-- Enables responsive shutdown on `SIGINT` or pipe closure
-
-**Implementation:**
-```c
-// Set socket nonblocking
-int flags = fcntl(sockfd, F_GETFL, 0);
-fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-
-// Set pipes nonblocking
-fcntl(pipe_fd, F_SETFL, fcntl(pipe_fd, F_GETFL) | O_NONBLOCK);
-```
-
-**Select Loop:**
-```c
-fd_set rfds, wfds;
-FD_ZERO(&rfds);
-FD_ZERO(&wfds);
-
-FD_SET(sockfd, &rfds);          // always monitor socket for reads
-if (send_queue.len > 0)
-    FD_SET(sockfd, &wfds);      // only monitor for writes if data pending
-
-select(maxfd + 1, &rfds, &wfds, NULL, &timeout);
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Buffering Strategy
-
-Network processes use separate input and output buffers to handle partial reads/writes:
-
-**Input Buffering (LineAcc):**
-```c
-typedef struct {
-    char   buf[2048];
-    size_t len;
-} LineAcc;
-```
-- Accumulates received bytes until complete line (ending with `\n`)
-- Supports CRLF (`\r\n`) by trimming `\r` before line delivery
-- Handles fragmented receives (partial lines across multiple `recv` calls)
-
-**Output Buffering (SendQ):**
-```c
-typedef struct {
-    char   buf[4096];
-    size_t off;    // bytes already sent
-    size_t len;    // total bytes to send
-} SendQ;
-```
-- Queues complete lines for transmission
-- Handles partial `send` (some bytes sent, some buffered)
-- Automatically advances `off` as data is sent
-
-**Drain Pattern (Pipes):**
-```c
-int drain_latest_drone(int fd, DroneState *latest, int *have_latest) {
-    for (;;) {
-        DroneState ds;
-        ssize_t r = read(fd, &ds, sizeof(ds));
-        if (r == sizeof(ds)) {
-            *latest = ds;      // keep newest
-            continue;          // drain more
-        }
-        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return 0;          // no more data
-        return (r == 0) ? 1 : -1;  // EOF or error
-    }
-}
-```
-- Continuously reads until `EAGAIN`, keeping only the latest value
-- Prevents old drone positions from accumulating in pipe
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Error Handling
-
-Network processes handle errors at multiple levels:
-
-**Socket Errors:**
-- Connection refused → log and exit (client cannot proceed)
-- Connection reset → log disconnect, clean shutdown
-- Broken pipe → log disconnect, clean shutdown
-
-**Protocol Errors:**
-- Unexpected token → transition to `DONE` state, log violation
-- Parse failure → transition to `DONE` state, log invalid data
-- Timeout (future enhancement) → close connection
-
-**Pipe Errors:**
-- bb_server closed pipe → assume UI quit, initiate graceful disconnect
-- Write failure → assume downstream dead, exit
-- Read EOF → normal shutdown condition
-
-**Signal Handling:**
-- `SIGINT` (Ctrl+C) → set running flag to 0, send `q` to peer
-- `SIGPIPE` → ignored (handled via `errno == EPIPE`)
-
-**Logging:**
-All errors are logged via `sim_log_info()` for post-mortem analysis:
-```
-network_server: client disconnected
-network_client: socket recv error
-network_server: invalid token 'foo'
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Configuration
-
-### Config File Parameters
-
-The `bin/conf/drone_parameters.conf` file contains network-specific settings:
-
-```conf
-# Network mode (controls which processes are spawned)
-network_mode normal         # normal | server | client
-
-# Server settings (used in server and client modes)
-server_address 127.0.0.1   # IP address for server/client
-server_port 8888            # TCP port number
-```
-
-**Parameter Details:**
-
-**`network_mode`:**
-- **Values:** `normal`, `server`, `client`
-- **Default:** `normal`
-- **Effect:** Determines which processes master spawns
-- **Note:** Overridden by `exe.sh` interactive mode selection
-
-**`server_address`:**
-- **Server mode:** Bind address (use `0.0.0.0` for all interfaces)
-- **Client mode:** Server IP to connect to
-- **Default:** `127.0.0.1` (localhost)
-
-**`server_port`:**
-- **Range:** 1-65535 (avoid <1024 without root)
-- **Default:** `8888`
-- **Recommendation:** Use ports >1024 to avoid permission issues
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Environment Variables
-
-Runtime behavior is controlled by environment variables:
-
-**`SIM_MODE`:**
-- **Purpose:** Override mode from config file
-- **Values:** `0` (normal), `1` (server), `2` (client)
-- **Set by:** `exe.sh` or `master` command-line argument
-- **Precedence:** Highest (overrides config and defaults)
-
-**`SIM_NET_FLIP_Y`:**
-- **Purpose:** Control Y-axis orientation for coordinate transformation
-- **Values:** `0` (bottom-left origin), `1` (top-left origin)
-- **Default:** `1` (matches most UI toolkits)
-- **Recommendation:** Keep default unless custom UI
-
-**`SIM_NET_ALPHA`:**
-- **Purpose:** Rotate local coordinates before network exchange
-- **Values:** `0`, `90`, `-90`, `180` (degrees)
-- **Default:** `0` (no rotation)
-- **Use Case:** Displays at different physical orientations
-
-**`SIM_WD_PID`:**
-- **Purpose:** Watchdog PID for monitored processes (Assignment 2)
-- **Set by:** `master` in normal mode only
-- **Effect:** Enables watchdog ping-ack protocol
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Mode Selection
-
-There are three ways to select the operating mode:
-
-**1. Interactive Script (Recommended):**
-```bash
-./exe.sh
-# Presents menu:
-#  1) Normal (Standalone)
-#  2) Server (Host)
-#  3) Client (Connect)
-```
-- Auto-detects local IP for server mode
-- Prompts for server IP/port in client mode
-- Updates config file automatically
-- Sets `SIM_MODE` environment variable
-
-**2. Direct Execution:**
-```bash
-cd build/src
-./master 0    # Normal mode
-./master 1    # Server mode
-./master 2    # Client mode
-```
-- Bypasses interactive setup
-- Requires manually editing config file
-- Useful for scripting
-
-**3. Environment Variable:**
-```bash
-export SIM_MODE=1
-./run.sh
-```
-- Overrides config file setting
-- Useful for testing without modifying config
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Usage
-
-### Running Server Mode
-
-**Step 1: Configure and Build**
-```bash
-./exe.sh
-# Select option 2 (Server)
-# Enter port (default 8888)
-# Note the displayed IP address for clients
-```
-
-The script will display:
-```
-Server will LISTEN on 0.0.0.0:8888
-Clients should CONNECT to: 192.168.1.100:8888
-```
-
-**Step 2: Server Starts**
-- BB_SERVER window opens with simulation view
-- INPUT window opens for keyboard controls
-- Console shows "network_server: listening..."
-
-**Step 3: Wait for Client**
-- Server blocks until client connects
-- Console shows "network_server: client connected" when client joins
-
-**Step 4: Control Server Drone**
-- Use INPUT window controls (q/w/e/a/s/d/z/x/c)
-- Server drone is the `@` symbol
-- Client drone appears as `#` (obstacle with repulsion)
-
-**Step 5: Graceful Shutdown**
-- Press `Q` in INPUT window to quit
-- Server sends `q` to client
-- Both sides close cleanly
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Running Client Mode
-
-**Step 1: Configure and Build**
-```bash
-./exe.sh
-# Select option 3 (Client)
-# Enter server IP (e.g., 192.168.1.100)
-# Enter server port (default 8888)
-```
-
-**Step 2: Client Starts**
-- BB_SERVER window opens
-- INPUT window opens
-- Console shows "network_client: connecting to <IP>:<port>..."
-
-**Step 3: Connection Established**
-- Client receives window dimensions from server
-- BB_SERVER resizes to match server world
-- Console shows "network_client: handshake complete, size=WxH"
-
-**Step 4: Control Client Drone**
-- Use INPUT window controls
-- Client drone is the `@` symbol
-- Server drone appears as `*` (cyan, read-only)
-
-**Step 5: Visual Synchronization**
-- Client drone movements are sent to server
-- Server drone position updates in real-time
-- No local obstacles or targets (server controls environment)
-
-**Step 6: Graceful Shutdown**
-- Press `Q` in INPUT window, OR
-- Server initiates disconnect (`q` received)
-- Client sends `qok` and exits
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Running Normal Mode
-
-**Step 1: Configure and Build**
-```bash
-./exe.sh
-# Select option 1 (Normal)
-```
-
-**Step 2: Normal Execution**
-- All features from Assignments 1 and 2
-- Watchdog monitors all processes
-- Obstacles and targets spawn dynamically
-- No network communication
-
-**Differences from Network Modes:**
-- Only one drone (`@` symbol)
-- Static obstacles (`#` symbols, yellow)
-- Targets (`+` symbols, magenta)
-- Watchdog ping-ack logging
-- Score tracking for target collection
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Integration with Assignment 2
-
-### Unchanged Components
-
-The following Assignment 2 features remain **exactly the same** in normal mode:
-
-- Watchdog process and ping-ack protocol
-- File-based logging with locking (`processes.log`, `watchdog.log`)
-- Process registration file (`processes.pid`)
-- Core simulation logic (drone physics, repulsion forces)
-- Ncurses-based UI with dynamic resizing
-- Configuration file system
-
-### Changed Components
-
-**Master Process:**
-- Now accepts mode argument from command line
-- Exports `SIM_MODE` environment variable
-- Spawns network processes in server/client modes
-- Skips watchdog/obstacles/targets in network modes
-- Creates additional pipes for network data flow
-
-**BB_Server Process:**
-- Mode-aware pipe configuration (different FD arguments per mode)
-- Server mode: reads obstacles from network (client drone)
-- Client mode: reads server drone position for visualization
-- Client mode: receives window dimensions from network
-- Updated UI to distinguish server drone (`*`) from local (`@`)
-
-**Drone Process:**
-- Unchanged! Always receives commands, outputs state
-- Network-agnostic (doesn't know if forces come from network or local obstacles)
-
-**Input Process:**
-- Unchanged! Always reads keyboard, outputs commands
-- Works identically in all three modes
-
-**Obstacles/Targets Processes:**
-- Skipped entirely in server/client modes
-- Only spawned in normal mode
-
-**Watchdog Process:**
-- Skipped entirely in server/client modes
-- Only spawned in normal mode
-- Network processes self-monitor via socket state
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### New Components
-
-**Network Server (`network_server.c`):**
-- 400+ lines of protocol state machine
-- Nonblocking I/O with select loop
-- Coordinate transformation (local → virtual → client)
-- Buffered send/receive for partial operations
-- Graceful disconnect handling
-
-**Network Client (`network_client.c`):**
-- 350+ lines of protocol state machine
-- Nonblocking I/O with select loop
-- Coordinate transformation (virtual → local)
-- Window dimension forwarding to bb_server
-- Server drone visualization support
-
-**Network Library (`sim_network.c` / `sim_network.h`):**
-- Protocol token constants
-- Line-based send/receive helpers
-- Socket setup utilities (server, client, nonblocking, timeouts)
-- Coordinate parsing and formatting
-
-**Interactive Launcher (`exe.sh`):**
-- Mode selection menu with visual prompts
-- Automatic IP detection (Linux: `ip route`, macOS: `ipconfig`)
-- Config file updating (sed-based)
-- Server IP/port prompting for client mode
-- Build system integration (CMake invocation)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Updated Project Architecture
-
-```
-├── bin
-│   ├── conf
-│   │   ├── drone_parameters.conf  ← UPDATED: network_mode, server_address, server_port
-│   │   └── [audio files: music.mp3, press.mp3, etc.]
-│   └── log
-│       ├── .gitkeep
-│       ├── processes.log
-│       ├── processes.pid
-│       └── watchdog.log
-├── build
-├── files
-│   └── assignmentsv4.7.pdf
-├── headers
-│   ├── CMakeLists.txt
-│   ├── sim_const.h                ← UPDATED: NET_DEFAULT_ADDRESS, NET_DEFAULT_PORT
-│   ├── sim_ipc.h
-│   ├── sim_log.h
-│   ├── sim_network.h              ← NEW: Network protocol definitions
-│   ├── sim_params.h               ← UPDATED: Added network fields to SimParams
-│   ├── sim_types.h                ← UPDATED: Added SimMode enum, network fields to WorldState
-│   └── sim_ui.h
-├── src
-│   ├── bb_server.c                ← UPDATED: Mode-aware pipe handling, server drone visualization
-│   ├── CMakeLists.txt             ← UPDATED: Added network_server, network_client targets
-│   ├── drone.c
-│   ├── input.c
-│   ├── master.c                   ← UPDATED: Mode-aware process spawning, network pipe creation
-│   ├── network_client.c           ← NEW: TCP client with protocol state machine
-│   ├── network_server.c           ← NEW: TCP server with protocol state machine
-│   ├── obstacles.c
-│   ├── sim_ipc.c
-│   ├── sim_log.c
-│   ├── sim_network.c              ← NEW: Network protocol implementation
-│   ├── sim_params.c               ← UPDATED: Parse network_mode, server_address, server_port
-│   ├── sim_ui.c                   ← UPDATED: Display server drone, mode-aware legend
-│   ├── targets.c
-│   └── watchdog.c
-├── .gitignore
-├── CMakeLists.txt
-├── diag.sh                        ← NEW: Diagnostic script for troubleshooting
-├── exe.sh                         ← NEW: Interactive mode selection launcher
-├── LICENSE
-├── README.md                      ← UPDATED: Assignment 3 documentation (this file)
-└── run.sh                         ← UPDATED: Network binary building
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-## Summary of Assignment 3 Additions
-
-| Feature | Purpose | Implementation |
-|---------|---------|----------------|
-| **Network Server** | Host simulation for remote clients | TCP server with state machine protocol |
-| **Network Client** | Connect to remote server | TCP client with state machine protocol |
-| **Multi-Mode Operation** | Support normal/server/client modes | Mode-aware process spawning in master |
-| **Coordinate Transformation** | Reconcile different UI orientations | Virtual coordinate system with flip/rotation |
-| **Line-Based Protocol** | Human-readable network exchange | Newline-delimited tokens and coordinates |
-| **Nonblocking I/O** | Simultaneous socket and pipe handling | fcntl O_NONBLOCK + select loop |
-| **Interactive Launcher** | User-friendly mode selection | exe.sh with menu and IP auto-detection |
-| **Window Synchronization** | Client matches server world size | Handshake transmits dimensions |
-| **Server Drone Visualization** | Client sees server's drone | Additional pipe from network_client to bb_server |
-| **Dynamic Obstacle** | Server sees client as obstacle | Client position sent as obstacle with repulsion |
-
-### Key Architectural Changes
-
-**Process Spawning (Mode-Dependent):**
-- Normal: watchdog + obstacles + targets + no network
-- Server: network_server + no watchdog/obstacles/targets
-- Client: network_client + no watchdog/obstacles/targets
-
-**Communication Topology:**
-
-**Normal Mode:**
-```
-obstacles → bb_server → UI
-targets   → bb_server → UI
-input     → bb_server → drone → bb_server (closed loop)
-```
-
-**Server Mode:**
-```
-input → bb_server → drone → bb_server → network_server → [socket]
-                                                             ↓
-                        network_server ← [socket] (client drone as obstacle)
-                                ↓
-                           bb_server (repulsion forces)
-```
-
-**Client Mode:**
-```
-input → bb_server → drone → bb_server → network_client → [socket] (obstacle)
-                                                             ↓
-network_client ← [socket] (server drone) → bb_server (visualization)
-```
-
-### Protocol Guarantees
-
-**Reliability:**
-- TCP ensures ordered, reliable delivery
-- No message loss or reordering
-- Broken connections detected immediately
-
-**Synchronization:**
-- Server and client exchange positions every cycle (20ms typical)
-- Coordinate transformations ensure consistent physics
-- Window dimensions synchronized at handshake
-
-**Error Recovery:**
-- Protocol violations → graceful disconnect
-- Pipe closure → send `q` to peer, clean shutdown
-- SIGINT → send `q` to peer, wait for `qok`
-
-These additions transform the Assignment 2 simulator into a **distributed multi-agent system** with networked drones, configurable coordinate systems, and interactive deployment options, while maintaining the reliability and observability features from previous assignments.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+4. On disconnect or error:
+   - Close socket and log disconnection
+   - Attempt reconnection (up to 5 times)
+   - If all attempts fail: exit
