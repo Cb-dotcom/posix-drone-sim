@@ -1,10 +1,5 @@
 /*
-    Network Server Process - FIXED for Stef504 compatibility
-    
-    Key changes:
-    1. Size format: "size W,H" (single line with comma)
-    2. Coordinate format: "X.X, Y.Y" (space after comma)
-    3. Precision reduced to %.1f to match Stef504
+    Network Server Process - Stats tracking for logging only (not sent to bb_server)
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -16,6 +11,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "sim_ipc.h"
 #include "sim_log.h"
@@ -29,6 +25,64 @@
 
 static volatile sig_atomic_t running = 1;
 static void handle_sigint(int sig) { (void)sig; running = 0; }
+
+/* ---------- Network Statistics Helpers (for logging only) ---------- */
+
+static void stats_init(NetworkStats *stats)
+{
+    memset(stats, 0, sizeof(NetworkStats));
+    stats->connected = 0;
+    clock_gettime(CLOCK_MONOTONIC, &stats->connection_start);
+}
+
+static void stats_on_connect(NetworkStats *stats)
+{
+    stats->connected = 1;
+    stats->reconnect_attempts = 0;
+    clock_gettime(CLOCK_MONOTONIC, &stats->connection_start);
+    stats->packets_sent = 0;
+    stats->packets_received = 0;
+    stats->bytes_sent = 0;
+    stats->bytes_received = 0;
+}
+
+static void stats_on_disconnect(NetworkStats *stats)
+{
+    stats->connected = 0;
+    stats->connection_drops++;
+}
+
+static void stats_on_send(NetworkStats *stats, size_t bytes)
+{
+    stats->packets_sent++;
+    stats->bytes_sent += bytes;
+    clock_gettime(CLOCK_MONOTONIC, &stats->last_packet_time);
+}
+
+static void stats_on_receive(NetworkStats *stats, size_t bytes)
+{
+    stats->packets_received++;
+    stats->bytes_received += bytes;
+    
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    
+    double dt = (now.tv_sec - stats->last_packet_time.tv_sec) +
+                (now.tv_nsec - stats->last_packet_time.tv_nsec) / 1e9;
+    stats->latency_ms = dt * 1000.0;
+    
+    if (stats->avg_latency_ms == 0.0) {
+        stats->avg_latency_ms = stats->latency_ms;
+    } else {
+        stats->avg_latency_ms = 0.7 * stats->avg_latency_ms + 0.3 * stats->latency_ms;
+    }
+    
+    double total_time = (now.tv_sec - stats->connection_start.tv_sec) +
+                        (now.tv_nsec - stats->connection_start.tv_nsec) / 1e9;
+    if (total_time > 0.0) {
+        stats->bandwidth_kbps = (stats->bytes_sent + stats->bytes_received) / total_time / 1024.0;
+    }
+}
 
 /* ---------- Env-driven coordinate config ---------- */
 
@@ -159,12 +213,13 @@ typedef struct {
     size_t len;
 } LineAcc;
 
-static int acc_recv_lines(int sockfd, LineAcc *acc)
+static int acc_recv_lines(int sockfd, LineAcc *acc, NetworkStats *stats)
 {
     for (;;) {
         ssize_t r = recv(sockfd, acc->buf + acc->len, sizeof(acc->buf) - acc->len, 0);
         if (r > 0) {
             acc->len += (size_t)r;
+            stats_on_receive(stats, (size_t)r);
             if (acc->len == sizeof(acc->buf)) return 0;
             continue;
         }
@@ -213,12 +268,13 @@ static int sq_append_line(SendQ *q, const char *s)
     return 0;
 }
 
-static int sq_flush(int sockfd, SendQ *q)
+static int sq_flush(int sockfd, SendQ *q, NetworkStats *stats)
 {
     while (q->off < q->len) {
         ssize_t w = send(sockfd, q->buf + q->off, q->len - q->off, MSG_NOSIGNAL);
         if (w > 0) {
             q->off += (size_t)w;
+            stats_on_send(stats, (size_t)w);
             continue;
         }
         if (w < 0 && errno == EINTR) continue;
@@ -246,18 +302,33 @@ typedef enum {
     S_WAIT_OOK = 0,
     S_SEND_SIZE,
     S_WAIT_SOK,
-
     S_SEND_DRONE,
     S_WAIT_DOK,
-
     S_SEND_OBST,
     S_WAIT_OBST_X,
     S_WAIT_OBST_Y,
     S_SEND_POK,
-
     S_WAIT_QOK,
     S_DONE
 } SState;
+
+/* ---------- Connection Management ---------- */
+
+static int accept_with_timeout(int listen_fd, int timeout_sec)
+{
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(listen_fd, &rfds);
+    
+    struct timeval tv;
+    tv.tv_sec = timeout_sec;
+    tv.tv_usec = 0;
+    
+    int ready = select(listen_fd + 1, &rfds, NULL, NULL, &tv);
+    if (ready <= 0) return -1;
+    
+    return net_accept_client(listen_fd);
+}
 
 int main(int argc, char *argv[])
 {
@@ -300,144 +371,204 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    sim_log_info("network_server: listening...");
-
-    int sock = net_accept_client(listen_fd);
-    if (sock < 0) {
-        perror("network_server: net_accept_client");
-        close(listen_fd);
-        return EXIT_FAILURE;
-    }
-    close(listen_fd);
-
-    sim_log_info("network_server: client connected");
-
-    (void)net_set_nonblocking(sock);
     (void)set_nonblocking(fd_drone_in);
     (void)set_nonblocking(fd_obstacle_out);
 
-    LineAcc in = { .len = 0 };
-    SendQ   out; sq_clear(&out);
+    NetworkStats stats;
+    stats_init(&stats);
 
-    DroneState latest_server = {0};
-    int have_server = 0;
-
-    double obst_x_v = 0.0, obst_y_v = 0.0;
-    double obst_x_l = 0.0, obst_y_l = 0.0;
-
-    // FIXED: Start with ok (compatible with Stef504)
-    (void)sq_append_line(&out, NET_TOK_OK);
-    SState st = S_WAIT_OOK;
-
-    while (st != S_DONE) {
-        int dr = drain_latest_drone(fd_drone_in, &latest_server, &have_server);
-        if (dr == 1) {
-            sim_log_info("network_server: bb_server closed drone pipe -> shutdown");
-            running = 0;
-        } else if (dr < 0) {
-            sim_log_info("network_server: error reading drone pipe -> shutdown");
-            running = 0;
+    while (running) {
+        sim_log_info("network_server: listening for client...");
+        
+        int sock = accept_with_timeout(listen_fd, 2);
+        
+        if (sock < 0) {
+            if (!running) break;
+            continue;
         }
 
-        if (!running && st != S_WAIT_QOK && st != S_DONE) {
-            sq_clear(&out);
-            (void)sq_append_line(&out, NET_TOK_Q);
-            st = S_WAIT_QOK;
-        }
+        sim_log_info("network_server: client connected");
+        stats_on_connect(&stats);
 
-        fd_set rfds, wfds;
-        FD_ZERO(&rfds);
-        FD_ZERO(&wfds);
+        (void)net_set_nonblocking(sock);
 
-        FD_SET(sock, &rfds);
-        if (out.len > 0) FD_SET(sock, &wfds);
+        LineAcc in = { .len = 0 };
+        SendQ   out; sq_clear(&out);
 
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 20000;
+        DroneState latest_server = {0};
+        int have_server = 0;
 
-        int ready = select(sock + 1, &rfds, &wfds, NULL, &tv);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            perror("network_server: select");
-            break;
-        }
+        double obst_x_v = 0.0, obst_y_v = 0.0;
+        double obst_x_l = 0.0, obst_y_l = 0.0;
 
-        if (FD_ISSET(sock, &wfds)) {
-            if (sq_flush(sock, &out) < 0) {
-                sim_log_info("network_server: socket send failed");
+        (void)sq_append_line(&out, NET_TOK_OK);
+        SState st = S_WAIT_OOK;
+
+        int connection_alive = 1;
+
+        while (st != S_DONE && connection_alive && running) {
+            int dr = drain_latest_drone(fd_drone_in, &latest_server, &have_server);
+            if (dr == 1) {
+                sim_log_info("network_server: bb_server closed drone pipe -> shutdown");
+                running = 0;
+                connection_alive = 0;
+                break;
+            } else if (dr < 0) {
+                sim_log_info("network_server: error reading drone pipe -> shutdown");
+                running = 0;
+                connection_alive = 0;
                 break;
             }
-        }
 
-        if (FD_ISSET(sock, &rfds)) {
-            int rr = acc_recv_lines(sock, &in);
-            if (rr == 1) {
-                sim_log_info("network_server: client disconnected");
+            if (!running && st != S_WAIT_QOK && st != S_DONE) {
+                sq_clear(&out);
+                (void)sq_append_line(&out, NET_TOK_Q);
+                st = S_WAIT_QOK;
+            }
+
+            fd_set rfds, wfds;
+            FD_ZERO(&rfds);
+            FD_ZERO(&wfds);
+
+            FD_SET(sock, &rfds);
+            if (out.len > 0) FD_SET(sock, &wfds);
+
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 20000;
+
+            int ready = select(sock + 1, &rfds, &wfds, NULL, &tv);
+            if (ready < 0) {
+                if (errno == EINTR) continue;
+                perror("network_server: select");
+                connection_alive = 0;
                 break;
             }
-            if (rr < 0) {
-                sim_log_info("network_server: socket recv error");
-                break;
-            }
-        }
 
-        if (out.len == 0) {
-            if (st == S_SEND_SIZE) {
-                // FIXED: Send as "size W,H" (single line, matches Stef504)
-                char b[64];
-                snprintf(b, sizeof(b), "size %d,%d", W, H);
-                (void)sq_append_line(&out, b);
-                st = S_WAIT_SOK;
-            } else if (st == S_SEND_DRONE) {
-                char b[64];
-
-                double xl = have_server ? latest_server.x : 0.0;
-                double yl = have_server ? latest_server.y : 0.0;
-
-                double xv, yv;
-                coord_local_to_virtual(xl, yl, W, H, flip_y, alpha_deg, &xv, &yv);
-
-                (void)sq_append_line(&out, NET_TOK_DRONE);
-                // FIXED: Use "%.1f, %.1f" format (space after comma, matches Stef504)
-                snprintf(b, sizeof(b), "%.1f, %.1f", xv, yv);
-                (void)sq_append_line(&out, b);
-
-                st = S_WAIT_DOK;
-            } else if (st == S_SEND_OBST) {
-                (void)sq_append_line(&out, NET_TOK_OBST);
-                st = S_WAIT_OBST_X;
-            } else if (st == S_SEND_POK) {
-                (void)sq_append_line(&out, NET_TOK_POK);
-                st = S_SEND_DRONE;
-            }
-        }
-
-        char line[256];
-        while (acc_pop_line(&in, line, sizeof(line))) {
-            if (st == S_WAIT_OOK) {
-                if (strcmp(line, NET_TOK_OOK) != 0) { st = S_DONE; break; }
-                st = S_SEND_SIZE;
-            }
-            else if (st == S_WAIT_SOK) {
-                if (strcmp(line, NET_TOK_SOK) != 0) { st = S_DONE; break; }
-                sim_log_info("network_server: handshake complete, size=%dx%d", W, H);
-                st = S_SEND_DRONE;
-            }
-            else if (st == S_WAIT_DOK) {
-                if (strcmp(line, NET_TOK_DOK) != 0) { st = S_DONE; break; }
-                st = S_SEND_OBST;
-            }
-            else if (st == S_WAIT_OBST_X) {
-                if (strcmp(line, NET_TOK_Q) == 0) {
-                    (void)sq_append_line(&out, NET_TOK_QOK);
-                    st = S_DONE;
+            if (FD_ISSET(sock, &wfds)) {
+                if (sq_flush(sock, &out, &stats) < 0) {
+                    sim_log_info("network_server: socket send failed");
+                    connection_alive = 0;
                     break;
                 }
-                // FIXED: Try both formats (with and without space after comma)
-                if (sscanf(line, "%lf, %lf", &obst_x_v, &obst_y_v) == 2 ||
-                    sscanf(line, "%lf,%lf", &obst_x_v, &obst_y_v) == 2) {
-                    // Successfully parsed both coordinates from single line
+            }
+
+            if (FD_ISSET(sock, &rfds)) {
+                int rr = acc_recv_lines(sock, &in, &stats);
+                if (rr == 1) {
+                    sim_log_info("network_server: client disconnected");
+                    connection_alive = 0;
+                    break;
+                }
+                if (rr < 0) {
+                    sim_log_info("network_server: socket recv error");
+                    connection_alive = 0;
+                    break;
+                }
+            }
+
+            // Log stats periodically (not sent to bb_server)
+            static int stats_log_counter = 0;
+            if (++stats_log_counter % 100 == 0) {
+                sim_log_info("network_server: stats - sent:%llu recv:%llu lat:%.1fms bw:%.2fKB/s",
+                             (unsigned long long)stats.packets_sent,
+                             (unsigned long long)stats.packets_received,
+                             stats.avg_latency_ms,
+                             stats.bandwidth_kbps);
+            }
+
+            if (out.len == 0) {
+                if (st == S_SEND_SIZE) {
+                    char b[64];
+                    snprintf(b, sizeof(b), "size %d,%d", W, H);
+                    (void)sq_append_line(&out, b);
+                    st = S_WAIT_SOK;
+                } else if (st == S_SEND_DRONE) {
+                    char b[64];
+
+                    double xl = have_server ? latest_server.x : 0.0;
+                    double yl = have_server ? latest_server.y : 0.0;
+
+                    double xv, yv;
+                    coord_local_to_virtual(xl, yl, W, H, flip_y, alpha_deg, &xv, &yv);
+
+                    (void)sq_append_line(&out, NET_TOK_DRONE);
+                    snprintf(b, sizeof(b), "%.1f, %.1f", xv, yv);
+                    (void)sq_append_line(&out, b);
+
+                    st = S_WAIT_DOK;
+                } else if (st == S_SEND_OBST) {
+                    (void)sq_append_line(&out, NET_TOK_OBST);
+                    st = S_WAIT_OBST_X;
+                } else if (st == S_SEND_POK) {
+                    (void)sq_append_line(&out, NET_TOK_POK);
+                    st = S_SEND_DRONE;
+                }
+            }
+
+            char line[256];
+            while (acc_pop_line(&in, line, sizeof(line))) {
+                if (st == S_WAIT_OOK) {
+                    if (strcmp(line, NET_TOK_OOK) != 0) { 
+                        stats.protocol_errors++;
+                        st = S_DONE; 
+                        break; 
+                    }
+                    st = S_SEND_SIZE;
+                }
+                else if (st == S_WAIT_SOK) {
+                    if (strcmp(line, NET_TOK_SOK) != 0) { 
+                        stats.protocol_errors++;
+                        st = S_DONE; 
+                        break; 
+                    }
+                    sim_log_info("network_server: handshake complete, size=%dx%d", W, H);
+                    st = S_SEND_DRONE;
+                }
+                else if (st == S_WAIT_DOK) {
+                    if (strcmp(line, NET_TOK_DOK) != 0) { 
+                        stats.protocol_errors++;
+                        st = S_DONE; 
+                        break; 
+                    }
+                    st = S_SEND_OBST;
+                }
+                else if (st == S_WAIT_OBST_X) {
+                    if (strcmp(line, NET_TOK_Q) == 0) {
+                        (void)sq_append_line(&out, NET_TOK_QOK);
+                        st = S_DONE;
+                        break;
+                    }
+                    if (sscanf(line, "%lf, %lf", &obst_x_v, &obst_y_v) == 2 ||
+                        sscanf(line, "%lf,%lf", &obst_x_v, &obst_y_v) == 2) {
+                        coord_virtual_to_local(obst_x_v, obst_y_v, W, H, flip_y, alpha_deg, &obst_x_l, &obst_y_l);
+
+                        Obstacle obs;
+                        obs.x = obst_x_l;
+                        obs.y = obst_y_l;
+                        obs.radius = 1.0;
+                        obs.active = 1;
+
+                        int wr = try_write_struct(fd_obstacle_out, &obs, sizeof(obs));
+                        if (wr < 0) { st = S_DONE; break; }
+
+                        st = S_SEND_POK;
+                    } else {
+                        if (parse_double_strict(line, &obst_x_v) != 0) { 
+                            stats.protocol_errors++;
+                            st = S_DONE; 
+                            break; 
+                        }
+                        st = S_WAIT_OBST_Y;
+                    }
+                }
+                else if (st == S_WAIT_OBST_Y) {
+                    if (parse_double_strict(line, &obst_y_v) != 0) { 
+                        stats.protocol_errors++;
+                        st = S_DONE; 
+                        break; 
+                    }
+
                     coord_virtual_to_local(obst_x_v, obst_y_v, W, H, flip_y, alpha_deg, &obst_x_l, &obst_y_l);
 
                     Obstacle obs;
@@ -450,39 +581,32 @@ int main(int argc, char *argv[])
                     if (wr < 0) { st = S_DONE; break; }
 
                     st = S_SEND_POK;
-                } else {
-                    // Try parsing as single X value (original behavior)
-                    if (parse_double_strict(line, &obst_x_v) != 0) { st = S_DONE; break; }
-                    st = S_WAIT_OBST_Y;
+                }
+                else if (st == S_WAIT_QOK) {
+                    if (strcmp(line, NET_TOK_QOK) == 0) { st = S_DONE; break; }
                 }
             }
-            else if (st == S_WAIT_OBST_Y) {
-                if (parse_double_strict(line, &obst_y_v) != 0) { st = S_DONE; break; }
+        }
 
-                coord_virtual_to_local(obst_x_v, obst_y_v, W, H, flip_y, alpha_deg, &obst_x_l, &obst_y_l);
+        sim_log_info("network_server: connection closed");
+        stats_on_disconnect(&stats);
+        close(sock);
 
-                Obstacle obs;
-                obs.x = obst_x_l;
-                obs.y = obst_y_l;
-                obs.radius = 1.0;
-                obs.active = 1;
-
-                int wr = try_write_struct(fd_obstacle_out, &obs, sizeof(obs));
-                if (wr < 0) { st = S_DONE; break; }
-
-                st = S_SEND_POK;
-            }
-            else if (st == S_WAIT_QOK) {
-                if (strcmp(line, NET_TOK_QOK) == 0) { st = S_DONE; break; }
-            }
+        if (running && connection_alive == 0) {
+            stats.reconnect_attempts++;
+            sim_log_info("network_server: waiting for reconnection (attempt %d)...", 
+                         stats.reconnect_attempts);
+            sleep(1);
         }
     }
 
     sim_log_info("network_server: shutting down");
-    close(sock);
+    close(listen_fd);
     close(fd_drone_in);
     close(fd_obstacle_out);
-    sim_log_info("network_server: exited");
+    sim_log_info("network_server: exited (total connections: %llu, drops: %llu)", 
+                 (unsigned long long)stats.reconnect_attempts + 1,
+                 (unsigned long long)stats.connection_drops);
     sim_log_close();
     return EXIT_SUCCESS;
 }

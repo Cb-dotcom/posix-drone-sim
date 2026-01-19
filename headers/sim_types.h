@@ -15,6 +15,7 @@
 
 #include <time.h> 
 #include <signal.h>
+#include <stdint.h>
 
 typedef enum {
     SIM_MODE_NORMAL = 0,
@@ -71,6 +72,33 @@ typedef struct {
     struct timespec time_created;
 } Target;
 
+// network state
+typedef struct {
+    // Connection state
+    int connected;              // 0 = disconnected, 1 = connected
+    int reconnect_attempts;     // Number of reconnection attempts
+    
+    // Packet statistics
+    uint64_t packets_sent;      // Total packets sent
+    uint64_t packets_received;  // Total packets received
+    uint64_t bytes_sent;        // Total bytes sent
+    uint64_t bytes_received;    // Total bytes received
+    
+    // Timing statistics
+    double latency_ms;          // Current round-trip latency in milliseconds
+    double avg_latency_ms;      // Moving average latency
+    double bandwidth_kbps;      // Current bandwidth in KB/s
+    
+    // Error statistics
+    uint64_t protocol_errors;   // Protocol violation count
+    uint64_t connection_drops;  // Number of disconnects
+    
+    // Timestamps
+    struct timespec last_packet_time;    // Last packet sent/received
+    struct timespec connection_start;    // When connection was established
+} NetworkStats;
+
+
 typedef struct {
     DroneState   drone; 
     CommandState cmd; 
@@ -99,6 +127,8 @@ typedef struct {
     int     has_server_drone;  // client only
     double  server_drone_x;
     double  server_drone_y;
+
+    NetworkStats net_stats;
 
 } WorldState;
 

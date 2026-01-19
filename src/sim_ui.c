@@ -14,6 +14,9 @@
 // Single map window, below the header, centered horizontally
 static WINDOW *map_win = NULL;
 
+// NEW: Network statistics panel (right side of screen)
+static WINDOW *stats_win = NULL;
+
 // Track last screen size to avoid unnecessary resizes
 static int last_screen_h = 0;
 static int last_screen_w = 0;
@@ -36,7 +39,7 @@ void play_sfx(const char *filename) {
 }
 
 // Compute map window size/position and create/resize it if needed
-static void layout_map_window(void)
+static void layout_windows(SimMode mode)
 {
     int H, W;
     getmaxyx(stdscr, H, W);
@@ -52,22 +55,49 @@ static void layout_map_window(void)
     int header_rows = 5;
     int bottom_margin = 1;
 
-    int wh = H - header_rows - bottom_margin;
-    if (wh < 3) wh = 3;
+    int available_height = H - header_rows - bottom_margin;
+    if (available_height < 3) available_height = 3;
 
     int side_margin = 2;
-    int ww = W - 2 * side_margin;
-    if (ww < 3) ww = 3;
+    
+    // NEW: Reserve space for stats panel in network modes
+    int stats_panel_width = 0;
+    if (mode == SIM_MODE_SERVER || mode == SIM_MODE_CLIENT) {
+        stats_panel_width = 30;  // Width of stats panel
+    }
 
-    int start_y = header_rows;       // map starts just below header
-    int start_x = (W - ww) / 2;
-    if (start_x < 0) start_x = 0;
+    int map_width = W - 2 * side_margin - stats_panel_width;
+    if (map_width < 3) map_width = 3;
 
+    int map_height = available_height;
+    int start_y = header_rows;
+    int map_x = side_margin;
+
+    // Create/resize map window
     if (map_win == NULL) {
-        map_win = newwin(wh, ww, start_y, start_x);
+        map_win = newwin(map_height, map_width, start_y, map_x);
     } else {
-        wresize(map_win, wh, ww);
-        mvwin(map_win, start_y, start_x);
+        wresize(map_win, map_height, map_width);
+        mvwin(map_win, start_y, map_x);
+    }
+
+    // NEW: Create/resize stats window for network modes
+    if (mode == SIM_MODE_SERVER || mode == SIM_MODE_CLIENT) {
+        int stats_x = map_x + map_width + 1;
+        int stats_width = stats_panel_width - 1;
+        
+        if (stats_win == NULL) {
+            stats_win = newwin(map_height, stats_width, start_y, stats_x);
+        } else {
+            wresize(stats_win, map_height, stats_width);
+            mvwin(stats_win, start_y, stats_x);
+        }
+    } else {
+        // Normal mode: no stats window
+        if (stats_win != NULL) {
+            delwin(stats_win);
+            stats_win = NULL;
+        }
     }
 }
 
@@ -84,6 +114,8 @@ static void ui_setup_colors(void)
     init_pair(2, COLOR_YELLOW, -1);          // normal menu text / obstacles
     init_pair(3, COLOR_MAGENTA, -1);         // title / targets
     init_pair(4, COLOR_CYAN, -1);            // server drone in client mode
+    init_pair(5, COLOR_GREEN, -1);           // NEW: stats panel (green for "good")
+    init_pair(6, COLOR_RED, -1);             // NEW: stats panel (red for "warning")
 }
 
 // Render the full-screen main menu and return selected option index
@@ -196,6 +228,108 @@ static void show_instructions_internal(void)
     delwin(instr_win);
 }
 
+// NEW: Draw network statistics panel
+static void draw_stats_panel(const NetworkStats *stats)
+{
+    if (!stats_win) return;
+
+    werase(stats_win);
+    box(stats_win, 0, 0);
+
+    // Title
+    wattron(stats_win, A_BOLD | COLOR_PAIR(5));
+    mvwprintw(stats_win, 0, 2, " Network Stats ");
+    wattroff(stats_win, A_BOLD | COLOR_PAIR(5));
+
+    int row = 2;
+
+    // Connection status
+    if (stats->connected) {
+        wattron(stats_win, COLOR_PAIR(5) | A_BOLD);
+        mvwprintw(stats_win, row++, 2, "Status: CONNECTED");
+        wattroff(stats_win, COLOR_PAIR(5) | A_BOLD);
+    } else {
+        wattron(stats_win, COLOR_PAIR(6) | A_BOLD);
+        mvwprintw(stats_win, row++, 2, "Status: DISCONNECTED");
+        wattroff(stats_win, COLOR_PAIR(6) | A_BOLD);
+    }
+
+    row++;
+
+    // Packet statistics
+    mvwprintw(stats_win, row++, 2, "Packets:");
+    mvwprintw(stats_win, row++, 4, "Sent: %llu", 
+              (unsigned long long)stats->packets_sent);
+    mvwprintw(stats_win, row++, 4, "Recv: %llu", 
+              (unsigned long long)stats->packets_received);
+
+    row++;
+
+    // Data transfer
+    mvwprintw(stats_win, row++, 2, "Data Transfer:");
+    
+    // Convert bytes to KB
+    double kb_sent = stats->bytes_sent / 1024.0;
+    double kb_recv = stats->bytes_received / 1024.0;
+    
+    mvwprintw(stats_win, row++, 4, "Sent: %.2f KB", kb_sent);
+    mvwprintw(stats_win, row++, 4, "Recv: %.2f KB", kb_recv);
+
+    row++;
+
+    // Latency
+    mvwprintw(stats_win, row++, 2, "Latency:");
+    
+    if (stats->avg_latency_ms > 0.0) {
+        // Color code latency: green < 50ms, yellow < 100ms, red >= 100ms
+        int latency_color = COLOR_PAIR(5);  // green
+        if (stats->avg_latency_ms >= 100.0) {
+            latency_color = COLOR_PAIR(6);  // red
+        } else if (stats->avg_latency_ms >= 50.0) {
+            latency_color = COLOR_PAIR(2);  // yellow
+        }
+        
+        wattron(stats_win, latency_color);
+        mvwprintw(stats_win, row++, 4, "Avg: %.1f ms", stats->avg_latency_ms);
+        wattroff(stats_win, latency_color);
+        
+        mvwprintw(stats_win, row++, 4, "Cur: %.1f ms", stats->latency_ms);
+    } else {
+        mvwprintw(stats_win, row++, 4, "N/A");
+    }
+
+    row++;
+
+    // Bandwidth
+    mvwprintw(stats_win, row++, 2, "Bandwidth:");
+    if (stats->bandwidth_kbps > 0.0) {
+        mvwprintw(stats_win, row++, 4, "%.2f KB/s", stats->bandwidth_kbps);
+    } else {
+        mvwprintw(stats_win, row++, 4, "N/A");
+    }
+
+    row++;
+
+    // Error statistics
+    if (stats->protocol_errors > 0 || stats->connection_drops > 0) {
+        wattron(stats_win, COLOR_PAIR(6));
+        mvwprintw(stats_win, row++, 2, "Errors:");
+        mvwprintw(stats_win, row++, 4, "Protocol: %llu", 
+                  (unsigned long long)stats->protocol_errors);
+        mvwprintw(stats_win, row++, 4, "Drops: %llu", 
+                  (unsigned long long)stats->connection_drops);
+        wattroff(stats_win, COLOR_PAIR(6));
+    }
+
+    // Reconnection attempts (if any)
+    if (stats->reconnect_attempts > 0) {
+        row++;
+        mvwprintw(stats_win, row++, 2, "Reconnects: %d", stats->reconnect_attempts);
+    }
+
+    wrefresh(stats_win);
+}
+
 // Initialize ncurses and the main map window
 void ui_init(void)
 {
@@ -207,7 +341,7 @@ void ui_init(void)
     curs_set(0);
 
     ui_setup_colors();
-    layout_map_window();
+    // Note: layout_windows will be called in ui_draw with proper mode
     werase(stdscr);
     refresh();
 }
@@ -218,6 +352,10 @@ void ui_shutdown(void)
     if (map_win) {
         delwin(map_win);
         map_win = NULL;
+    }
+    if (stats_win) {
+        delwin(stats_win);
+        stats_win = NULL;
     }
     endwin();
 }
@@ -236,7 +374,7 @@ void ui_draw(const WorldState *world)
 {
     if (!world) return;
 
-    layout_map_window();
+    layout_windows(world->mode);
 
     int H, W;
     getmaxyx(map_win, H, W);
@@ -375,4 +513,9 @@ void ui_draw(const WorldState *world)
 
     refresh();
     wrefresh(map_win);
+
+    // NEW: Draw network statistics panel if in network mode
+    if (world->mode == SIM_MODE_SERVER || world->mode == SIM_MODE_CLIENT) {
+        draw_stats_panel(&world->net_stats);
+    }
 }
